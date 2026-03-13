@@ -23,6 +23,7 @@ import (
 const (
 	maxDiscordReplyRunes = 2000
 	maxTopicsPerMessage  = 2
+	botTestingChannel    = "bot-testing"
 )
 
 type Runtime struct {
@@ -114,6 +115,10 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 		return
 	}
 
+	if !isBotTestingChannel(session, event.ChannelID) {
+		return
+	}
+
 	content := strings.TrimSpace(event.Content)
 	if content == "" {
 		return
@@ -197,6 +202,10 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	if err != nil {
 		log.Printf("event=retrieve_error message_id=%q err=%q", message.ID, err.Error())
 		bundle = models.RetrievalBundle{}
+	}
+
+	if err := session.ChannelTyping(message.ChannelID); err != nil {
+		log.Printf("event=typing_error message_id=%q err=%q", message.ID, err.Error())
 	}
 
 	reply, err := r.generator.GenerateReply(ctx, message, bundle)
@@ -414,4 +423,26 @@ func trimToDiscordLimit(input string) string {
 		cutoff = 0
 	}
 	return string(runes[:cutoff]) + "..."
+}
+
+func isBotTestingChannel(session *discordgo.Session, channelID string) bool {
+	channel := getChannel(session, channelID)
+	if channel == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(channel.Name), botTestingChannel)
+}
+
+func getChannel(session *discordgo.Session, channelID string) *discordgo.Channel {
+	if session == nil || channelID == "" {
+		return nil
+	}
+	if channel, err := session.State.Channel(channelID); err == nil {
+		return channel
+	}
+	channel, err := session.Channel(channelID)
+	if err != nil {
+		return nil
+	}
+	return channel
 }
