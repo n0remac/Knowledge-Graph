@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ const (
 	durableConfidenceThreshold = 0.85
 	candidateStatus            = "candidate"
 	durableStatus              = "durable"
+	maxFactValueLength         = 500
 )
 
 type Store struct {
@@ -36,8 +38,11 @@ type graphData struct {
 	Facts            map[int64]models.Fact                 `json:"facts"`
 	FactKeyToID      map[string]int64                      `json:"fact_key_to_id"`
 	FactSources      map[int64]map[string]factSourceRecord `json:"fact_sources"`
+	Edges            map[int64]models.Edge                 `json:"edges"`
+	EdgeKeyToID      map[string]int64                      `json:"edge_key_to_id"`
 	NextTopicID      int64                                 `json:"next_topic_id"`
 	NextFactID       int64                                 `json:"next_fact_id"`
+	NextEdgeID       int64                                 `json:"next_edge_id"`
 }
 
 type userRecord struct {
@@ -127,6 +132,18 @@ func (s *Store) SaveMessage(_ context.Context, msg models.Message) error {
 	return nil
 }
 
+func (s *Store) GetMessageByID(_ context.Context, messageID string) (models.Message, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	messageID = strings.TrimSpace(messageID)
+	if messageID == "" {
+		return models.Message{}, false
+	}
+	msg, ok := s.data.Messages[messageID]
+	return msg, ok
+}
+
 func (s *Store) UpsertTopic(_ context.Context, name string, seenAt time.Time) (models.Topic, error) {
 	normalized := normalizeTopic(name)
 	if normalized == "" {
@@ -149,6 +166,7 @@ func (s *Store) UpsertTopic(_ context.Context, name string, seenAt time.Time) (m
 	topic := models.Topic{
 		ID:         s.data.NextTopicID,
 		Name:       normalized,
+		Kind:       "other",
 		Summary:    "",
 		LastSeenAt: seenAt.UTC(),
 	}
@@ -181,7 +199,7 @@ func (s *Store) LinkMessageTopic(_ context.Context, messageID string, topicID in
 
 func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput, messageID, modelName string, observedAt time.Time) (models.Fact, error) {
 	clean := sanitizeFactInput(input)
-	if clean.Kind == "" || clean.SubjectID == "" || clean.ValueText == "" {
+	if clean.Kind == "" || clean.DiscordUserID == "" || clean.AboutType == "" || clean.AboutID == "" || clean.ValueText == "" {
 		return models.Fact{}, fmt.Errorf("invalid fact input after sanitization")
 	}
 	if strings.TrimSpace(messageID) == "" {
@@ -202,15 +220,16 @@ func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput,
 			status = durableStatus
 		}
 		s.data.Facts[factID] = models.Fact{
-			ID:         factID,
-			Kind:       clean.Kind,
-			SubjectID:  clean.SubjectID,
-			ObjectID:   clean.ObjectID,
-			ValueText:  clean.ValueText,
-			Confidence: clean.Confidence,
-			Status:     status,
-			CreatedAt:  now,
-			LastSeenAt: now,
+			ID:            factID,
+			DiscordUserID: clean.DiscordUserID,
+			Kind:          clean.Kind,
+			ValueText:     clean.ValueText,
+			AboutType:     clean.AboutType,
+			AboutID:       clean.AboutID,
+			Confidence:    clean.Confidence,
+			Status:        status,
+			CreatedAt:     now,
+			LastSeenAt:    now,
 		}
 		s.data.FactKeyToID[factKey] = factID
 	} else {
@@ -245,6 +264,41 @@ func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput,
 	return s.data.Facts[factID], nil
 }
 
+func (s *Store) UpsertEdge(_ context.Context, input models.EdgeInput, observedAt time.Time) (models.Edge, error) {
+	clean := sanitizeEdgeInput(input)
+	if clean.FromType == "" || clean.FromID == "" || clean.EdgeType == "" || clean.ToType == "" || clean.ToID == "" {
+		return models.Edge{}, fmt.Errorf("invalid edge input after sanitization")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	now := observedAt.UTC()
+	edgeKey := buildEdgeKey(clean)
+	edgeID, exists := s.data.EdgeKeyToID[edgeKey]
+	if !exists {
+		s.data.NextEdgeID++
+		edgeID = s.data.NextEdgeID
+		s.data.Edges[edgeID] = models.Edge{
+			ID:         edgeID,
+			FromType:   clean.FromType,
+			FromID:     clean.FromID,
+			EdgeType:   clean.EdgeType,
+			ToType:     clean.ToType,
+			ToID:       clean.ToID,
+			CreatedAt:  now,
+			LastSeenAt: now,
+		}
+		s.data.EdgeKeyToID[edgeKey] = edgeID
+		return s.data.Edges[edgeID], nil
+	}
+
+	edge := s.data.Edges[edgeID]
+	edge.LastSeenAt = now
+	s.data.Edges[edgeID] = edge
+	return edge, nil
+}
+
 func (s *Store) GetRecentMessages(_ context.Context, channelID string, limit int) ([]models.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -266,14 +320,9 @@ func (s *Store) GetRecentMessages(_ context.Context, channelID string, limit int
 	return out, nil
 }
 
-func (s *Store) GetFactsForSubjects(_ context.Context, subjectIDs []string, limit int) ([]models.Fact, error) {
-	subjectSet := make(map[string]struct{}, len(subjectIDs))
-	for _, id := range subjectIDs {
-		if id = strings.TrimSpace(id); id != "" {
-			subjectSet[id] = struct{}{}
-		}
-	}
-	if len(subjectSet) == 0 {
+func (s *Store) GetDurableFactsForDiscordUser(_ context.Context, discordUserID string, limit int) ([]models.Fact, error) {
+	discordUserID = normalizeDiscordUserID(discordUserID)
+	if discordUserID == "" {
 		return nil, nil
 	}
 
@@ -282,21 +331,18 @@ func (s *Store) GetFactsForSubjects(_ context.Context, subjectIDs []string, limi
 
 	out := make([]models.Fact, 0, limit)
 	for _, fact := range s.data.Facts {
-		if _, ok := subjectSet[fact.SubjectID]; !ok {
+		if fact.DiscordUserID != discordUserID {
+			continue
+		}
+		if fact.Status != durableStatus {
 			continue
 		}
 		out = append(out, fact)
 	}
 
 	sort.Slice(out, func(i, j int) bool {
-		left := out[i]
-		right := out[j]
-		if left.Status != right.Status {
-			return left.Status == durableStatus
-		}
-		return left.LastSeenAt.After(right.LastSeenAt)
+		return out[i].LastSeenAt.After(out[j].LastSeenAt)
 	})
-
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -404,6 +450,12 @@ func (g *graphData) ensureMaps() {
 	if g.FactSources == nil {
 		g.FactSources = make(map[int64]map[string]factSourceRecord)
 	}
+	if g.Edges == nil {
+		g.Edges = make(map[int64]models.Edge)
+	}
+	if g.EdgeKeyToID == nil {
+		g.EdgeKeyToID = make(map[string]int64)
+	}
 }
 
 func sanitizeFactInput(in models.FactInput) models.FactInput {
@@ -412,9 +464,13 @@ func sanitizeFactInput(in models.FactInput) models.FactInput {
 		kind = ""
 	}
 
-	subject := strings.TrimSpace(in.SubjectID)
-	object := strings.TrimSpace(in.ObjectID)
+	discordUserID := normalizeDiscordUserID(in.DiscordUserID)
+	aboutType := strings.ToLower(strings.TrimSpace(in.AboutType))
+	aboutID := normalizeAboutID(aboutType, in.AboutID)
 	value := strings.TrimSpace(in.ValueText)
+	if len(value) > maxFactValueLength {
+		value = strings.TrimSpace(value[:maxFactValueLength])
+	}
 
 	confidence := in.Confidence
 	switch {
@@ -428,20 +484,108 @@ func sanitizeFactInput(in models.FactInput) models.FactInput {
 	}
 
 	return models.FactInput{
-		Kind:       kind,
-		SubjectID:  subject,
-		ObjectID:   object,
-		ValueText:  value,
-		Confidence: confidence,
+		DiscordUserID: discordUserID,
+		Kind:          kind,
+		ValueText:     value,
+		AboutType:     aboutType,
+		AboutID:       aboutID,
+		Confidence:    confidence,
 	}
+}
+
+func normalizeAboutID(aboutType, raw string) string {
+	switch aboutType {
+	case "user":
+		return normalizeDiscordUserID(raw)
+	case "topic":
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return ""
+		}
+		numeric, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || numeric <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(numeric, 10)
+	default:
+		return ""
+	}
+}
+
+func sanitizeEdgeInput(in models.EdgeInput) models.EdgeInput {
+	fromType := strings.ToLower(strings.TrimSpace(in.FromType))
+	toType := strings.ToLower(strings.TrimSpace(in.ToType))
+	edgeType := strings.ToUpper(strings.TrimSpace(in.EdgeType))
+	fromID := normalizeNodeID(fromType, in.FromID)
+	toID := normalizeNodeID(toType, in.ToID)
+
+	if !isAllowedNodeType(fromType) || !isAllowedNodeType(toType) || !isAllowedEdgeType(edgeType) {
+		return models.EdgeInput{}
+	}
+	if fromID == "" || toID == "" {
+		return models.EdgeInput{}
+	}
+
+	return models.EdgeInput{
+		FromType: fromType,
+		FromID:   fromID,
+		EdgeType: edgeType,
+		ToType:   toType,
+		ToID:     toID,
+	}
+}
+
+func normalizeNodeID(nodeType, raw string) string {
+	id := strings.TrimSpace(raw)
+	switch nodeType {
+	case "user":
+		return normalizeDiscordUserID(id)
+	case "topic", "fact":
+		parsed, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || parsed <= 0 {
+			return ""
+		}
+		return strconv.FormatInt(parsed, 10)
+	case "message":
+		if id == "" {
+			return ""
+		}
+		return id
+	default:
+		return ""
+	}
+}
+
+func normalizeDiscordUserID(raw string) string {
+	id := strings.TrimSpace(raw)
+	if len(id) < 15 || len(id) > 21 {
+		return ""
+	}
+	for _, ch := range id {
+		if ch < '0' || ch > '9' {
+			return ""
+		}
+	}
+	return id
 }
 
 func buildFactKey(input models.FactInput) string {
 	return strings.Join([]string{
+		input.DiscordUserID,
 		input.Kind,
-		input.SubjectID,
-		input.ObjectID,
+		input.AboutType,
+		input.AboutID,
 		cleanCanonical(input.ValueText),
+	}, "|")
+}
+
+func buildEdgeKey(input models.EdgeInput) string {
+	return strings.Join([]string{
+		input.FromType,
+		input.FromID,
+		input.EdgeType,
+		input.ToType,
+		input.ToID,
 	}, "|")
 }
 
@@ -453,7 +597,25 @@ func cleanCanonical(value string) string {
 
 func isAllowedFactKind(kind string) bool {
 	switch kind {
-	case "preference", "goal", "project", "relationship", "identity", "status":
+	case "preference", "goal", "project", "identity", "status":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedNodeType(nodeType string) bool {
+	switch nodeType {
+	case "user", "message", "topic", "fact":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedEdgeType(edgeType string) bool {
+	switch edgeType {
+	case "SENT", "MENTIONS_TOPIC", "DERIVED_FACT", "FACT_FOR_USER", "FACT_ABOUT_TOPIC":
 		return true
 	default:
 		return false

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,7 +20,10 @@ import (
 	"github.com/n0remac/Knowledge-Graph/internal/store"
 )
 
-const maxDiscordReplyRunes = 2000
+const (
+	maxDiscordReplyRunes = 2000
+	maxTopicsPerMessage  = 2
+)
 
 type Runtime struct {
 	cfg       config.Config
@@ -114,6 +118,7 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	if content == "" {
 		return
 	}
+	mentionedUserIDs := extractMentionIDs(event)
 
 	timestamp := time.Now().UTC()
 	if !event.Timestamp.IsZero() {
@@ -126,14 +131,15 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	}
 
 	message := models.Message{
-		ID:        event.ID,
-		ChannelID: event.ChannelID,
-		GuildID:   event.GuildID,
-		AuthorID:  event.Author.ID,
-		Author:    event.Author.Username,
-		Content:   content,
-		Timestamp: timestamp,
-		ReplyToID: replyToID,
+		ID:               event.ID,
+		ChannelID:        event.ChannelID,
+		GuildID:          event.GuildID,
+		AuthorID:         event.Author.ID,
+		Author:           event.Author.Username,
+		MentionedUserIDs: mentionedUserIDs,
+		Content:          content,
+		Timestamp:        timestamp,
+		ReplyToID:        replyToID,
 	}
 
 	log.Printf(
@@ -150,23 +156,44 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	if err := r.store.SaveMessage(ctx, message); err != nil {
 		log.Printf("event=store_message_error message_id=%q err=%q", message.ID, err.Error())
 	}
+	r.persistEdge(ctx, models.EdgeInput{
+		FromType: "user",
+		FromID:   message.AuthorID,
+		EdgeType: "SENT",
+		ToType:   "message",
+		ToID:     message.ID,
+	}, message.Timestamp, message.ID)
 
-	extraction, err := r.extractor.ExtractFromMessage(ctx, message)
+	extractionCtx, err := r.retriever.RetrieveForExtraction(ctx, memory.RetrieveForExtractionInput{
+		ChannelID: message.ChannelID,
+		SpeakerID: message.AuthorID,
+		ReplyToID: message.ReplyToID,
+	})
 	if err != nil {
-		log.Printf("event=extract_error message_id=%q err=%q", message.ID, err.Error())
-	} else {
-		r.persistExtraction(ctx, message, extraction)
+		log.Printf("event=extract_context_error message_id=%q err=%q", message.ID, err.Error())
+		extractionCtx = models.ExtractionContext{}
 	}
+
+	topicCandidates, err := r.extractor.ExtractTopics(ctx, message, extractionCtx)
+	if err != nil {
+		log.Printf("event=topic_extract_error message_id=%q err=%q", message.ID, err.Error())
+	}
+	resolvedNewTopics := r.resolveAndPersistTopics(ctx, message, topicCandidates)
+
+	factCandidates, err := r.extractor.ExtractFacts(ctx, message, resolvedNewTopics, extractionCtx.RecentTopics, extractionCtx)
+	if err != nil {
+		log.Printf("event=fact_extract_error message_id=%q err=%q", message.ID, err.Error())
+	}
+	r.resolveAndPersistFacts(ctx, message, factCandidates, resolvedNewTopics, extractionCtx.RecentTopics)
+
 	if err := r.store.Flush(); err != nil {
 		log.Printf("event=store_flush_error message_id=%q err=%q", message.ID, err.Error())
 	}
 
-	retrieveInput := memory.RetrieveInput{
-		ChannelID:       message.ChannelID,
-		SpeakerID:       message.AuthorID,
-		MentionedUserID: extractMentionIDs(event),
-	}
-	bundle, err := r.retriever.Retrieve(ctx, retrieveInput)
+	bundle, err := r.retriever.Retrieve(ctx, memory.RetrieveInput{
+		ChannelID: message.ChannelID,
+		SpeakerID: message.AuthorID,
+	})
 	if err != nil {
 		log.Printf("event=retrieve_error message_id=%q err=%q", message.ID, err.Error())
 		bundle = models.RetrievalBundle{}
@@ -193,26 +220,172 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	log.Printf("event=reply_sent source_message_id=%q reply_len=%d", message.ID, len([]rune(reply)))
 }
 
-func (r *Runtime) persistExtraction(ctx context.Context, sourceMessage models.Message, extraction memory.ExtractionResult) {
-	for _, topicName := range extraction.Topics {
+func (r *Runtime) resolveAndPersistTopics(ctx context.Context, sourceMessage models.Message, topicCandidates []string) []models.Topic {
+	resolved := make([]models.Topic, 0, len(topicCandidates))
+	seen := make(map[int64]struct{}, len(topicCandidates))
+	for _, topicName := range topicCandidates {
+		if len(resolved) >= maxTopicsPerMessage {
+			break
+		}
+
+		topicName = normalizeTopicForResolution(topicName)
+		if topicName == "" || isGenericTopic(topicName) {
+			continue
+		}
+
 		topic, err := r.store.UpsertTopic(ctx, topicName, sourceMessage.Timestamp)
 		if err != nil {
 			log.Printf("event=topic_upsert_error message_id=%q topic=%q err=%q", sourceMessage.ID, topicName, err.Error())
 			continue
 		}
+		if _, ok := seen[topic.ID]; ok {
+			continue
+		}
+		seen[topic.ID] = struct{}{}
+		resolved = append(resolved, topic)
+
 		if err := r.store.LinkMessageTopic(ctx, sourceMessage.ID, topic.ID); err != nil {
 			log.Printf("event=topic_link_error message_id=%q topic_id=%d err=%q", sourceMessage.ID, topic.ID, err.Error())
+			continue
 		}
+		r.persistEdge(ctx, models.EdgeInput{
+			FromType: "message",
+			FromID:   sourceMessage.ID,
+			EdgeType: "MENTIONS_TOPIC",
+			ToType:   "topic",
+			ToID:     strconv.FormatInt(topic.ID, 10),
+		}, sourceMessage.Timestamp, sourceMessage.ID)
 	}
+	return resolved
+}
 
-	for _, fact := range extraction.Facts {
-		if strings.TrimSpace(fact.SubjectID) == "" {
-			fact.SubjectID = sourceMessage.AuthorID
+func (r *Runtime) resolveAndPersistFacts(ctx context.Context, sourceMessage models.Message, factCandidates []memory.FactCandidate, newTopics, contextTopics []models.Topic) {
+	for _, candidate := range factCandidates {
+		aboutType, aboutID, ok := resolveAboutRef(candidate.AboutRef, sourceMessage.AuthorID, newTopics, contextTopics)
+		if !ok {
+			continue
 		}
-		if _, err := r.store.UpsertFactFromMessage(ctx, fact, sourceMessage.ID, r.cfg.OllamaExtractModel, sourceMessage.Timestamp); err != nil {
-			log.Printf("event=fact_upsert_error message_id=%q kind=%q err=%q", sourceMessage.ID, fact.Kind, err.Error())
+		if aboutType == "user" && shouldPreferTopicFact(candidate.Kind) {
+			if topicType, topicID, topicOK := firstTopicTarget(newTopics, contextTopics); topicOK {
+				aboutType = topicType
+				aboutID = topicID
+			}
+		}
+
+		fact, err := r.store.UpsertFactFromMessage(ctx, models.FactInput{
+			DiscordUserID: sourceMessage.AuthorID,
+			Kind:          candidate.Kind,
+			ValueText:     candidate.ValueText,
+			AboutType:     aboutType,
+			AboutID:       aboutID,
+			Confidence:    candidate.Confidence,
+		}, sourceMessage.ID, r.cfg.OllamaExtractModel, sourceMessage.Timestamp)
+		if err != nil {
+			log.Printf("event=fact_upsert_error message_id=%q kind=%q err=%q", sourceMessage.ID, candidate.Kind, err.Error())
+			continue
+		}
+
+		factID := strconv.FormatInt(fact.ID, 10)
+		r.persistEdge(ctx, models.EdgeInput{
+			FromType: "message",
+			FromID:   sourceMessage.ID,
+			EdgeType: "DERIVED_FACT",
+			ToType:   "fact",
+			ToID:     factID,
+		}, sourceMessage.Timestamp, sourceMessage.ID)
+		r.persistEdge(ctx, models.EdgeInput{
+			FromType: "fact",
+			FromID:   factID,
+			EdgeType: "FACT_FOR_USER",
+			ToType:   "user",
+			ToID:     sourceMessage.AuthorID,
+		}, sourceMessage.Timestamp, sourceMessage.ID)
+		if fact.AboutType == "topic" {
+			r.persistEdge(ctx, models.EdgeInput{
+				FromType: "fact",
+				FromID:   factID,
+				EdgeType: "FACT_ABOUT_TOPIC",
+				ToType:   "topic",
+				ToID:     fact.AboutID,
+			}, sourceMessage.Timestamp, sourceMessage.ID)
 		}
 	}
+}
+
+func (r *Runtime) persistEdge(ctx context.Context, input models.EdgeInput, observedAt time.Time, messageID string) {
+	if _, err := r.store.UpsertEdge(ctx, input, observedAt); err != nil {
+		log.Printf("event=edge_upsert_error message_id=%q edge_type=%q err=%q", messageID, input.EdgeType, err.Error())
+	}
+}
+
+func resolveAboutRef(rawRef, speakerID string, newTopics, contextTopics []models.Topic) (string, string, bool) {
+	ref := strings.ToLower(strings.TrimSpace(rawRef))
+	switch {
+	case ref == "user":
+		return "user", speakerID, true
+	case strings.HasPrefix(ref, "new_topic:"):
+		index, ok := parseTopicRefIndex(strings.TrimPrefix(ref, "new_topic:"))
+		if !ok || index >= len(newTopics) {
+			return "", "", false
+		}
+		return "topic", strconv.FormatInt(newTopics[index].ID, 10), true
+	case strings.HasPrefix(ref, "context_topic:"):
+		index, ok := parseTopicRefIndex(strings.TrimPrefix(ref, "context_topic:"))
+		if !ok || index >= len(contextTopics) {
+			return "", "", false
+		}
+		return "topic", strconv.FormatInt(contextTopics[index].ID, 10), true
+	default:
+		return "", "", false
+	}
+}
+
+func parseTopicRefIndex(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	index, err := strconv.Atoi(raw)
+	if err != nil || index < 0 {
+		return 0, false
+	}
+	return index, true
+}
+
+func normalizeTopicForResolution(input string) string {
+	input = strings.ToLower(strings.TrimSpace(input))
+	input = strings.Join(strings.Fields(input), " ")
+	input = strings.TrimPrefix(input, "the ")
+	return input
+}
+
+func isGenericTopic(topic string) bool {
+	switch topic {
+	case "", "technology", "tech", "software", "development", "project", "projects", "goal", "goals", "coding", "assistant", "conversation":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldPreferTopicFact(kind string) bool {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	switch kind {
+	case "goal", "project", "status", "preference":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstTopicTarget(newTopics, contextTopics []models.Topic) (string, string, bool) {
+	if len(newTopics) > 0 {
+		return "topic", strconv.FormatInt(newTopics[0].ID, 10), true
+	}
+	if len(contextTopics) > 0 {
+		return "topic", strconv.FormatInt(contextTopics[0].ID, 10), true
+	}
+	return "", "", false
 }
 
 func extractMentionIDs(event *discordgo.MessageCreate) []string {

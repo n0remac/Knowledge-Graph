@@ -68,22 +68,48 @@ func buildUserPrompt(currentMessage models.Message, bundle models.RetrievalBundl
 		builder.WriteString("\n")
 	}
 
-	builder.WriteString("\nRelevant memory facts:\n")
-	if len(bundle.Facts) == 0 {
+	builder.WriteString("\nUser memory facts:\n")
+	if len(bundle.UserFacts) == 0 {
 		builder.WriteString("- none\n")
 	} else {
-		for _, fact := range bundle.Facts {
+		for _, fact := range bundle.UserFacts {
 			builder.WriteString("- [")
 			builder.WriteString(fact.Status)
 			builder.WriteString(" conf=")
 			builder.WriteString(fmt.Sprintf("%.2f", fact.Confidence))
 			builder.WriteString("] user=")
-			builder.WriteString(fact.SubjectID)
+			builder.WriteString(fact.DiscordUserID)
 			builder.WriteString(" kind=")
 			builder.WriteString(fact.Kind)
-			if fact.ObjectID != "" {
-				builder.WriteString(" object=")
-				builder.WriteString(fact.ObjectID)
+			builder.WriteString(" about=user:")
+			builder.WriteString(fact.AboutID)
+			builder.WriteString(" value=")
+			builder.WriteString(fact.ValueText)
+			builder.WriteString("\n")
+		}
+	}
+
+	topicNameByID := make(map[string]string, len(bundle.Topics))
+	for _, topic := range bundle.Topics {
+		topicNameByID[fmt.Sprintf("%d", topic.ID)] = topic.Name
+	}
+
+	builder.WriteString("\nConcept memory facts:\n")
+	if len(bundle.TopicFacts) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, fact := range bundle.TopicFacts {
+			builder.WriteString("- [")
+			builder.WriteString(fact.Status)
+			builder.WriteString(" conf=")
+			builder.WriteString(fmt.Sprintf("%.2f", fact.Confidence))
+			builder.WriteString("] kind=")
+			builder.WriteString(fact.Kind)
+			builder.WriteString(" about=topic:")
+			if topicName, ok := topicNameByID[fact.AboutID]; ok {
+				builder.WriteString(topicName)
+			} else {
+				builder.WriteString(fact.AboutID)
 			}
 			builder.WriteString(" value=")
 			builder.WriteString(fact.ValueText)
