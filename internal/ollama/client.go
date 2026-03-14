@@ -21,7 +21,7 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
-type chatRequest struct {
+type ChatRequest struct {
 	Model    string        `json:"model"`
 	Messages []ChatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
@@ -29,6 +29,13 @@ type chatRequest struct {
 
 type chatResponse struct {
 	Message ChatMessage `json:"message"`
+}
+
+type ChatResult struct {
+	Request         ChatRequest `json:"request"`
+	RequestBodyJSON string      `json:"request_body_json"`
+	RawResponse     string      `json:"raw_response"`
+	ResponseContent string      `json:"response_content"`
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -41,40 +48,57 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 }
 
 func (c *Client) Chat(ctx context.Context, model string, messages []ChatMessage) (string, error) {
-	payload := chatRequest{
+	result, err := c.ChatDetailed(ctx, ChatRequest{
 		Model:    model,
 		Messages: messages,
 		Stream:   false,
+	})
+	if err != nil {
+		return "", err
 	}
+	return result.ResponseContent, nil
+}
 
+func (c *Client) ChatDetailed(ctx context.Context, payload ChatRequest) (ChatResult, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("marshal chat payload: %w", err)
+		return ChatResult{}, fmt.Errorf("marshal chat payload: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("create chat request: %w", err)
+		return ChatResult{}, fmt.Errorf("create chat request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	result := ChatResult{
+		Request:         payload,
+		RequestBodyJSON: string(body),
+	}
+
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ollama request failed: %w", err)
+		return result, fmt.Errorf("ollama request failed: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return result, fmt.Errorf("read chat response: %w", err)
+	}
+	result.RawResponse = string(respBody)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return "", fmt.Errorf("ollama status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return result, fmt.Errorf("ollama status %d: %s", resp.StatusCode, strings.TrimSpace(result.RawResponse))
 	}
 
 	var parsed chatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return "", fmt.Errorf("decode chat response: %w", err)
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return result, fmt.Errorf("decode chat response: %w", err)
 	}
 
-	return parsed.Message.Content, nil
+	result.ResponseContent = parsed.Message.Content
+	return result, nil
 }

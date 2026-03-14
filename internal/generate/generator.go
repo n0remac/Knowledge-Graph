@@ -2,24 +2,28 @@ package generate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
+	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
 
 type Generator struct {
-	client  *ollama.Client
-	model   string
-	persona string
+	client    *ollama.Client
+	model     string
+	persona   string
+	telemetry *telemetry.Manager
 }
 
-func NewGenerator(client *ollama.Client, model, persona string) *Generator {
+func NewGenerator(client *ollama.Client, model, persona string, manager *telemetry.Manager) *Generator {
 	return &Generator{
-		client:  client,
-		model:   model,
-		persona: persona,
+		client:    client,
+		model:     model,
+		persona:   persona,
+		telemetry: manager,
 	}
 }
 
@@ -38,15 +42,57 @@ Instructions:
 	)
 
 	userPrompt := buildUserPrompt(currentMessage, bundle)
-	reply, err := g.client.Chat(ctx, g.model, []ollama.ChatMessage{
+	messages := []ollama.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
+	}
+	request := ollama.ChatRequest{
+		Model:    g.model,
+		Messages: messages,
+		Stream:   false,
+	}
+	requestBody, _ := json.Marshal(request)
+	g.emit(ctx, "ollama_request", "reply generation request prepared", map[string]any{
+		"purpose":           "generate_reply",
+		"model":             g.model,
+		"messages":          messages,
+		"system_prompt":     systemPrompt,
+		"user_prompt":       userPrompt,
+		"request_body_json": string(requestBody),
 	})
+
+	result, err := g.client.ChatDetailed(ctx, request)
 	if err != nil {
+		g.emit(ctx, "ollama_response", "reply generation request failed", map[string]any{
+			"purpose":           "generate_reply",
+			"model":             g.model,
+			"request_body_json": string(requestBody),
+			"raw_response":      result.RawResponse,
+			"error":             err.Error(),
+		})
 		return "", err
 	}
 
-	return strings.TrimSpace(reply), nil
+	g.emit(ctx, "ollama_response", "reply generation response received", map[string]any{
+		"purpose":      "generate_reply",
+		"model":        g.model,
+		"raw_response": result.RawResponse,
+	})
+
+	reply := strings.TrimSpace(result.ResponseContent)
+	g.emit(ctx, "generate_reply_result", "reply generation completed", map[string]any{
+		"reply":        reply,
+		"reply_length": len([]rune(reply)),
+		"model":        g.model,
+	})
+	return reply, nil
+}
+
+func (g *Generator) emit(ctx context.Context, kind, summary string, payload map[string]any) {
+	if g == nil || g.telemetry == nil {
+		return
+	}
+	g.telemetry.Emit(ctx, telemetry.StageGeneration, kind, summary, payload)
 }
 
 func buildUserPrompt(currentMessage models.Message, bundle models.RetrievalBundle) string {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/n0remac/Knowledge-Graph/internal/models"
+	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
 
 const (
@@ -23,9 +24,10 @@ const (
 )
 
 type Store struct {
-	path string
-	mu   sync.RWMutex
-	data graphData
+	path      string
+	mu        sync.RWMutex
+	data      graphData
+	telemetry *telemetry.Manager
 }
 
 type graphData struct {
@@ -59,7 +61,7 @@ type factSourceRecord struct {
 	ModelName   string  `json:"model_name"`
 }
 
-func NewGraph(path string) (*Store, error) {
+func NewGraph(path string, manager *telemetry.Manager) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("graph store path cannot be empty")
 	}
@@ -68,8 +70,9 @@ func NewGraph(path string) (*Store, error) {
 	}
 
 	store := &Store{
-		path: path,
-		data: newGraphData(),
+		path:      path,
+		data:      newGraphData(),
+		telemetry: manager,
 	}
 
 	if err := store.load(); err != nil {
@@ -90,10 +93,18 @@ func (s *Store) Flush() error {
 	return s.persistLocked()
 }
 
-func (s *Store) UpsertUser(_ context.Context, id, username, displayName string, now time.Time) error {
+func (s *Store) UpsertUser(ctx context.Context, id, username, displayName string, now time.Time) error {
+	input := map[string]any{
+		"id":           strings.TrimSpace(id),
+		"username":     strings.TrimSpace(username),
+		"display_name": strings.TrimSpace(displayName),
+	}
+
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return fmt.Errorf("user id cannot be empty")
+		err := fmt.Errorf("user id cannot be empty")
+		s.emitError(ctx, "upsert_user_error", "store rejected empty user id", err, map[string]any{"input": input})
+		return err
 	}
 	username = strings.TrimSpace(username)
 	if username == "" {
@@ -105,60 +116,100 @@ func (s *Store) UpsertUser(_ context.Context, id, username, displayName string, 
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.data.Users[id] = userRecord{
+	previous, existed := s.data.Users[id]
+	user := userRecord{
 		ID:          id,
 		Username:    username,
 		DisplayName: displayName,
 		UpdatedAt:   now.UTC().UnixMilli(),
 	}
+	s.data.Users[id] = user
+	s.mu.Unlock()
+
+	s.emit(ctx, "upsert_user", "store upserted user", map[string]any{
+		"input":    input,
+		"output":   user,
+		"created":  !existed,
+		"updated":  existed,
+		"previous": previous,
+	})
 	return nil
 }
 
-func (s *Store) SaveMessage(_ context.Context, msg models.Message) error {
+func (s *Store) SaveMessage(ctx context.Context, msg models.Message) error {
 	if msg.ID == "" {
-		return fmt.Errorf("message id cannot be empty")
+		err := fmt.Errorf("message id cannot be empty")
+		s.emitError(ctx, "save_message_error", "store rejected empty message id", err, map[string]any{"input": msg})
+		return err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if _, exists := s.data.Messages[msg.ID]; exists {
-		return nil
+	_, exists := s.data.Messages[msg.ID]
+	if !exists {
+		s.data.Messages[msg.ID] = msg
+		s.data.ChannelMessageID[msg.ChannelID] = append(s.data.ChannelMessageID[msg.ChannelID], msg.ID)
 	}
+	count := len(s.data.ChannelMessageID[msg.ChannelID])
+	s.mu.Unlock()
 
-	s.data.Messages[msg.ID] = msg
-	s.data.ChannelMessageID[msg.ChannelID] = append(s.data.ChannelMessageID[msg.ChannelID], msg.ID)
+	s.emit(ctx, "save_message", "store saved message", map[string]any{
+		"input":                   msg,
+		"output":                  msg,
+		"created":                 !exists,
+		"channel_message_count":   count,
+		"message_already_present": exists,
+	})
 	return nil
 }
 
-func (s *Store) GetMessageByID(_ context.Context, messageID string) (models.Message, bool) {
+func (s *Store) GetMessageByID(ctx context.Context, messageID string) (models.Message, bool) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	messageID = strings.TrimSpace(messageID)
 	if messageID == "" {
+		s.mu.RUnlock()
+		s.emit(ctx, "get_message_by_id", "store lookup skipped empty message id", map[string]any{
+			"input": map[string]any{"message_id": messageID},
+			"found": false,
+		})
 		return models.Message{}, false
 	}
 	msg, ok := s.data.Messages[messageID]
+	s.mu.RUnlock()
+
+	s.emit(ctx, "get_message_by_id", "store fetched message by id", map[string]any{
+		"input":  map[string]any{"message_id": messageID},
+		"output": msg,
+		"found":  ok,
+	})
 	return msg, ok
 }
 
-func (s *Store) UpsertTopic(_ context.Context, name string, seenAt time.Time) (models.Topic, error) {
+func (s *Store) UpsertTopic(ctx context.Context, name string, seenAt time.Time) (models.Topic, error) {
 	normalized := normalizeTopic(name)
 	if normalized == "" {
-		return models.Topic{}, fmt.Errorf("topic name is empty")
+		err := fmt.Errorf("topic name is empty")
+		s.emitError(ctx, "upsert_topic_error", "store rejected empty topic name", err, map[string]any{"input": map[string]any{"name": name}})
+		return models.Topic{}, err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	created := false
+	var previous models.Topic
 
 	if id, ok := s.data.TopicNameToID[normalized]; ok {
 		topic := s.data.Topics[id]
+		previous = topic
 		if seenAt.After(topic.LastSeenAt) {
 			topic.LastSeenAt = seenAt.UTC()
 			s.data.Topics[id] = topic
 		}
+		s.mu.Unlock()
+		s.emit(ctx, "upsert_topic", "store updated topic", map[string]any{
+			"input":    map[string]any{"name": name, "normalized_name": normalized},
+			"output":   topic,
+			"created":  false,
+			"previous": previous,
+		})
 		return topic, nil
 	}
 
@@ -172,46 +223,87 @@ func (s *Store) UpsertTopic(_ context.Context, name string, seenAt time.Time) (m
 	}
 	s.data.Topics[topic.ID] = topic
 	s.data.TopicNameToID[normalized] = topic.ID
+	created = true
+	s.mu.Unlock()
+
+	s.emit(ctx, "upsert_topic", "store created topic", map[string]any{
+		"input":   map[string]any{"name": name, "normalized_name": normalized},
+		"output":  topic,
+		"created": created,
+	})
 	return topic, nil
 }
 
-func (s *Store) LinkMessageTopic(_ context.Context, messageID string, topicID int64) error {
+func (s *Store) LinkMessageTopic(ctx context.Context, messageID string, topicID int64) error {
 	if strings.TrimSpace(messageID) == "" || topicID <= 0 {
+		s.emit(ctx, "link_message_topic", "store skipped invalid message-topic link", map[string]any{
+			"input": map[string]any{"message_id": messageID, "topic_id": topicID},
+			"noop":  true,
+		})
 		return nil
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, ok := s.data.Messages[messageID]; !ok {
-		return fmt.Errorf("cannot link unknown message %q", messageID)
+		s.mu.Unlock()
+		err := fmt.Errorf("cannot link unknown message %q", messageID)
+		s.emitError(ctx, "link_message_topic_error", "store failed to link message to topic", err, map[string]any{
+			"input": map[string]any{"message_id": messageID, "topic_id": topicID},
+		})
+		return err
 	}
 	if _, ok := s.data.Topics[topicID]; !ok {
-		return fmt.Errorf("cannot link unknown topic %d", topicID)
+		s.mu.Unlock()
+		err := fmt.Errorf("cannot link unknown topic %d", topicID)
+		s.emitError(ctx, "link_message_topic_error", "store failed to link message to topic", err, map[string]any{
+			"input": map[string]any{"message_id": messageID, "topic_id": topicID},
+		})
+		return err
 	}
 
 	if s.data.MessageTopics[messageID] == nil {
 		s.data.MessageTopics[messageID] = make(map[int64]struct{})
 	}
+	_, existed := s.data.MessageTopics[messageID][topicID]
 	s.data.MessageTopics[messageID][topicID] = struct{}{}
+	linkCount := len(s.data.MessageTopics[messageID])
+	s.mu.Unlock()
+
+	s.emit(ctx, "link_message_topic", "store linked message to topic", map[string]any{
+		"input":         map[string]any{"message_id": messageID, "topic_id": topicID},
+		"created":       !existed,
+		"message_links": linkCount,
+	})
 	return nil
 }
 
-func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput, messageID, modelName string, observedAt time.Time) (models.Fact, error) {
+func (s *Store) UpsertFactFromMessage(ctx context.Context, input models.FactInput, messageID, modelName string, observedAt time.Time) (models.Fact, error) {
 	clean := sanitizeFactInput(input)
 	if clean.Kind == "" || clean.DiscordUserID == "" || clean.AboutType == "" || clean.AboutID == "" || clean.ValueText == "" {
-		return models.Fact{}, fmt.Errorf("invalid fact input after sanitization")
+		err := fmt.Errorf("invalid fact input after sanitization")
+		s.emitError(ctx, "upsert_fact_error", "store rejected invalid fact input", err, map[string]any{
+			"input":           input,
+			"sanitized_input": clean,
+			"message_id":      messageID,
+		})
+		return models.Fact{}, err
 	}
 	if strings.TrimSpace(messageID) == "" {
-		return models.Fact{}, fmt.Errorf("message id cannot be empty for fact source")
+		err := fmt.Errorf("message id cannot be empty for fact source")
+		s.emitError(ctx, "upsert_fact_error", "store rejected fact source without message id", err, map[string]any{
+			"input":           input,
+			"sanitized_input": clean,
+			"message_id":      messageID,
+		})
+		return models.Fact{}, err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	factKey := buildFactKey(clean)
 	factID, exists := s.data.FactKeyToID[factKey]
 	now := observedAt.UTC()
+	created := false
+	var previous models.Fact
 	if !exists {
 		s.data.NextFactID++
 		factID = s.data.NextFactID
@@ -232,8 +324,10 @@ func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput,
 			LastSeenAt:    now,
 		}
 		s.data.FactKeyToID[factKey] = factID
+		created = true
 	} else {
 		fact := s.data.Facts[factID]
+		previous = fact
 		if clean.Confidence > fact.Confidence {
 			fact.Confidence = clean.Confidence
 		}
@@ -260,22 +354,40 @@ func (s *Store) UpsertFactFromMessage(_ context.Context, input models.FactInput,
 		fact.Status = durableStatus
 		s.data.Facts[factID] = fact
 	}
+	output := s.data.Facts[factID]
+	sourceCount := len(s.data.FactSources[factID])
+	s.mu.Unlock()
 
-	return s.data.Facts[factID], nil
+	s.emit(ctx, "upsert_fact", "store upserted fact", map[string]any{
+		"input":           input,
+		"sanitized_input": clean,
+		"output":          output,
+		"created":         created,
+		"previous":        previous,
+		"message_id":      messageID,
+		"model_name":      strings.TrimSpace(modelName),
+		"source_count":    sourceCount,
+	})
+
+	return output, nil
 }
 
-func (s *Store) UpsertEdge(_ context.Context, input models.EdgeInput, observedAt time.Time) (models.Edge, error) {
+func (s *Store) UpsertEdge(ctx context.Context, input models.EdgeInput, observedAt time.Time) (models.Edge, error) {
 	clean := sanitizeEdgeInput(input)
 	if clean.FromType == "" || clean.FromID == "" || clean.EdgeType == "" || clean.ToType == "" || clean.ToID == "" {
-		return models.Edge{}, fmt.Errorf("invalid edge input after sanitization")
+		err := fmt.Errorf("invalid edge input after sanitization")
+		s.emitError(ctx, "upsert_edge_error", "store rejected invalid edge input", err, map[string]any{
+			"input":           input,
+			"sanitized_input": clean,
+		})
+		return models.Edge{}, err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	now := observedAt.UTC()
 	edgeKey := buildEdgeKey(clean)
 	edgeID, exists := s.data.EdgeKeyToID[edgeKey]
+	created := false
 	if !exists {
 		s.data.NextEdgeID++
 		edgeID = s.data.NextEdgeID
@@ -290,21 +402,42 @@ func (s *Store) UpsertEdge(_ context.Context, input models.EdgeInput, observedAt
 			LastSeenAt: now,
 		}
 		s.data.EdgeKeyToID[edgeKey] = edgeID
-		return s.data.Edges[edgeID], nil
+		created = true
+		edge := s.data.Edges[edgeID]
+		s.mu.Unlock()
+		s.emit(ctx, "upsert_edge", "store created edge", map[string]any{
+			"input":           input,
+			"sanitized_input": clean,
+			"output":          edge,
+			"created":         created,
+		})
+		return edge, nil
 	}
 
 	edge := s.data.Edges[edgeID]
 	edge.LastSeenAt = now
 	s.data.Edges[edgeID] = edge
+	s.mu.Unlock()
+
+	s.emit(ctx, "upsert_edge", "store updated edge", map[string]any{
+		"input":           input,
+		"sanitized_input": clean,
+		"output":          edge,
+		"created":         false,
+	})
 	return edge, nil
 }
 
-func (s *Store) GetRecentMessages(_ context.Context, channelID string, limit int) ([]models.Message, error) {
+func (s *Store) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]models.Message, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	messageIDs := s.data.ChannelMessageID[channelID]
 	if len(messageIDs) == 0 {
+		s.mu.RUnlock()
+		s.emit(ctx, "get_recent_messages", "store fetched recent messages", map[string]any{
+			"input":  map[string]any{"channel_id": channelID, "limit": limit},
+			"count":  0,
+			"output": []models.Message{},
+		})
 		return nil, nil
 	}
 
@@ -317,18 +450,28 @@ func (s *Store) GetRecentMessages(_ context.Context, channelID string, limit int
 	for _, id := range messageIDs[start:] {
 		out = append(out, s.data.Messages[id])
 	}
+	s.mu.RUnlock()
+
+	s.emit(ctx, "get_recent_messages", "store fetched recent messages", map[string]any{
+		"input":  map[string]any{"channel_id": channelID, "limit": limit},
+		"count":  len(out),
+		"output": out,
+	})
 	return out, nil
 }
 
-func (s *Store) GetDurableFactsForDiscordUser(_ context.Context, discordUserID string, limit int) ([]models.Fact, error) {
+func (s *Store) GetDurableFactsForDiscordUser(ctx context.Context, discordUserID string, limit int) ([]models.Fact, error) {
 	discordUserID = normalizeDiscordUserID(discordUserID)
 	if discordUserID == "" {
+		s.emit(ctx, "get_durable_facts_for_discord_user", "store skipped durable fact lookup for empty user id", map[string]any{
+			"input":  map[string]any{"discord_user_id": discordUserID, "limit": limit},
+			"count":  0,
+			"output": []models.Fact{},
+		})
 		return nil, nil
 	}
 
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	out := make([]models.Fact, 0, limit)
 	for _, fact := range s.data.Facts {
 		if fact.DiscordUserID != discordUserID {
@@ -346,15 +489,30 @@ func (s *Store) GetDurableFactsForDiscordUser(_ context.Context, discordUserID s
 	if len(out) > limit {
 		out = out[:limit]
 	}
+	s.mu.RUnlock()
+
+	s.emit(ctx, "get_durable_facts_for_discord_user", "store fetched durable facts for user", map[string]any{
+		"input":  map[string]any{"discord_user_id": discordUserID, "limit": limit},
+		"count":  len(out),
+		"output": out,
+	})
 	return out, nil
 }
 
-func (s *Store) GetRecentTopicsForChannel(_ context.Context, channelID string, recentMessageLimit, topicLimit int) ([]models.Topic, error) {
+func (s *Store) GetRecentTopicsForChannel(ctx context.Context, channelID string, recentMessageLimit, topicLimit int) ([]models.Topic, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	messageIDs := s.data.ChannelMessageID[channelID]
 	if len(messageIDs) == 0 {
+		s.mu.RUnlock()
+		s.emit(ctx, "get_recent_topics_for_channel", "store fetched recent topics for channel", map[string]any{
+			"input": map[string]any{
+				"channel_id":           channelID,
+				"recent_message_limit": recentMessageLimit,
+				"topic_limit":          topicLimit,
+			},
+			"count":  0,
+			"output": []models.Topic{},
+		})
 		return nil, nil
 	}
 	start := 0
@@ -380,6 +538,17 @@ func (s *Store) GetRecentTopicsForChannel(_ context.Context, channelID string, r
 	if len(topics) > topicLimit {
 		topics = topics[:topicLimit]
 	}
+	s.mu.RUnlock()
+
+	s.emit(ctx, "get_recent_topics_for_channel", "store fetched recent topics for channel", map[string]any{
+		"input": map[string]any{
+			"channel_id":           channelID,
+			"recent_message_limit": recentMessageLimit,
+			"topic_limit":          topicLimit,
+		},
+		"count":  len(topics),
+		"output": topics,
+	})
 	return topics, nil
 }
 
@@ -533,6 +702,23 @@ func sanitizeEdgeInput(in models.EdgeInput) models.EdgeInput {
 		ToType:   toType,
 		ToID:     toID,
 	}
+}
+
+func (s *Store) emit(ctx context.Context, kind, summary string, payload map[string]any) {
+	if s == nil || s.telemetry == nil {
+		return
+	}
+	s.telemetry.Emit(ctx, telemetry.StageStore, kind, summary, payload)
+}
+
+func (s *Store) emitError(ctx context.Context, kind, summary string, err error, payload map[string]any) {
+	if payload == nil {
+		payload = make(map[string]any, 1)
+	}
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	s.emit(ctx, kind, summary, payload)
 }
 
 func normalizeNodeID(nodeType, raw string) string {

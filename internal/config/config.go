@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
 
 const (
@@ -31,6 +33,7 @@ type Config struct {
 	RecallFactLimit    int
 	RecallTopicLimit   int
 	RequestTimeout     time.Duration
+	Telemetry          telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -61,6 +64,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	telemetryCfg, err := loadTelemetryConfig()
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		DiscordBotToken:    token,
@@ -73,6 +80,62 @@ func Load() (Config, error) {
 		RecallFactLimit:    factLimit,
 		RecallTopicLimit:   topicLimit,
 		RequestTimeout:     time.Duration(timeoutSec) * time.Second,
+		Telemetry:          telemetryCfg,
+	}, nil
+}
+
+func loadTelemetryConfig() (telemetry.Config, error) {
+	defaults := telemetry.DefaultConfig()
+
+	enabled, err := readBoolEnv("TELEMETRY_ENABLED", defaults.Enabled)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	enableDiscord, err := readBoolEnv("TELEMETRY_ENABLE_DISCORD_REPORTING", defaults.EnableDiscordReporting)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	bufferSize, err := readIntEnv("TELEMETRY_BUFFER_SIZE", defaults.BufferSize)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	maxAttachmentBytes, err := readIntEnv("TELEMETRY_MAX_ATTACHMENT_BYTES", defaults.MaxAttachmentBytes)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	writePrompts, err := readBoolEnv("TELEMETRY_WRITE_RAW_PROMPT_FILES", defaults.WriteRawPromptFiles)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	writeResponses, err := readBoolEnv("TELEMETRY_WRITE_RAW_RESPONSE_FILES", defaults.WriteRawResponseFiles)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	writeStoreEvents, err := readBoolEnv("TELEMETRY_WRITE_STORE_EVENTS", defaults.WriteStoreEvents)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	writeRetrievalEvents, err := readBoolEnv("TELEMETRY_WRITE_RETRIEVAL_EVENTS", defaults.WriteRetrievalEvents)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+	writeRuntimeEvents, err := readBoolEnv("TELEMETRY_WRITE_RUNTIME_EVENTS", defaults.WriteRuntimeEvents)
+	if err != nil {
+		return telemetry.Config{}, err
+	}
+
+	return telemetry.Config{
+		Enabled:                enabled,
+		BaseDir:                filepath.Clean(readEnvOrDefault("TELEMETRY_BASE_DIR", defaults.BaseDir)),
+		EnableDiscordReporting: enableDiscord,
+		DiscordDebugChannelID:  strings.TrimSpace(readEnvOrDefault("TELEMETRY_DISCORD_DEBUG_CHANNEL_ID", "bot-debug")),
+		BufferSize:             bufferSize,
+		MaxAttachmentBytes:     maxAttachmentBytes,
+		WriteRawPromptFiles:    writePrompts,
+		WriteRawResponseFiles:  writeResponses,
+		WriteStoreEvents:       writeStoreEvents,
+		WriteRetrievalEvents:   writeRetrievalEvents,
+		WriteRuntimeEvents:     writeRuntimeEvents,
 	}, nil
 }
 
@@ -97,4 +160,20 @@ func readIntEnv(name string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be > 0, got %d", name, value)
 	}
 	return value, nil
+}
+
+func readBoolEnv(name string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+
+	switch strings.ToLower(raw) {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid %s=%q: must be a boolean", name, raw)
+	}
 }

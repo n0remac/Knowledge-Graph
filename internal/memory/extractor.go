@@ -9,11 +9,13 @@ import (
 
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
+	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
 
 type Extractor struct {
-	client *ollama.Client
-	model  string
+	client    *ollama.Client
+	model     string
+	telemetry *telemetry.Manager
 }
 
 type topicExtractionPayload struct {
@@ -46,10 +48,11 @@ const (
 	maxFallbackFactsPerTurn = 1
 )
 
-func NewExtractor(client *ollama.Client, model string) *Extractor {
+func NewExtractor(client *ollama.Client, model string, manager *telemetry.Manager) *Extractor {
 	return &Extractor{
-		client: client,
-		model:  model,
+		client:    client,
+		model:     model,
+		telemetry: manager,
 	}
 }
 
@@ -69,18 +72,51 @@ Rules:
 - If uncertain, return fewer topics.`
 
 	userPrompt := buildTopicExtractionPrompt(currentMessage, extractionCtx)
-	raw, err := e.client.Chat(ctx, e.model, []ollama.ChatMessage{
+	messages := []ollama.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
+	}
+	request := ollama.ChatRequest{
+		Model:    e.model,
+		Messages: messages,
+		Stream:   false,
+	}
+	requestBody, _ := json.Marshal(request)
+	e.emit(ctx, "ollama_request", "topic extraction request prepared", map[string]any{
+		"purpose":           "extract_topics",
+		"model":             e.model,
+		"messages":          messages,
+		"system_prompt":     systemPrompt,
+		"user_prompt":       userPrompt,
+		"request_body_json": string(requestBody),
 	})
+
+	result, err := e.client.ChatDetailed(ctx, request)
 	if err != nil {
+		e.emit(ctx, "ollama_response", "topic extraction request failed", map[string]any{
+			"purpose":           "extract_topics",
+			"model":             e.model,
+			"request_body_json": string(requestBody),
+			"raw_response":      result.RawResponse,
+			"error":             err.Error(),
+		})
 		return nil, err
 	}
+	raw := result.ResponseContent
 
 	payload, err := parseTopicExtractionPayload(raw)
+	responsePayload := map[string]any{
+		"purpose":      "extract_topics",
+		"model":        e.model,
+		"raw_response": result.RawResponse,
+	}
 	if err != nil {
+		responsePayload["parse_error"] = err.Error()
+		e.emit(ctx, "ollama_response", "topic extraction response parse failed", responsePayload)
 		return nil, fmt.Errorf("parse topic extraction payload: %w", err)
 	}
+	responsePayload["parsed_payload"] = payload
+	e.emit(ctx, "ollama_response", "topic extraction response received", responsePayload)
 
 	topics := make([]string, 0, len(payload.Topics))
 	for _, topic := range payload.Topics {
@@ -92,6 +128,9 @@ Rules:
 			topics = appendIfMissing(topics, part)
 		}
 	}
+	e.emit(ctx, "extract_topics_result", "topic extraction completed", map[string]any{
+		"topics": topics,
+	})
 	return topics, nil
 }
 
@@ -123,18 +162,51 @@ Rules:
 - If uncertain, return fewer facts.`
 
 	userPrompt := buildFactExtractionPrompt(currentMessage, newTopics, contextTopics, extractionCtx)
-	raw, err := e.client.Chat(ctx, e.model, []ollama.ChatMessage{
+	messages := []ollama.ChatMessage{
 		{Role: "system", Content: systemPrompt},
 		{Role: "user", Content: userPrompt},
+	}
+	request := ollama.ChatRequest{
+		Model:    e.model,
+		Messages: messages,
+		Stream:   false,
+	}
+	requestBody, _ := json.Marshal(request)
+	e.emit(ctx, "ollama_request", "fact extraction request prepared", map[string]any{
+		"purpose":           "extract_facts",
+		"model":             e.model,
+		"messages":          messages,
+		"system_prompt":     systemPrompt,
+		"user_prompt":       userPrompt,
+		"request_body_json": string(requestBody),
 	})
+
+	result, err := e.client.ChatDetailed(ctx, request)
 	if err != nil {
+		e.emit(ctx, "ollama_response", "fact extraction request failed", map[string]any{
+			"purpose":           "extract_facts",
+			"model":             e.model,
+			"request_body_json": string(requestBody),
+			"raw_response":      result.RawResponse,
+			"error":             err.Error(),
+		})
 		return nil, err
 	}
+	raw := result.ResponseContent
 
 	payload, err := parseFactExtractionPayload(raw)
+	responsePayload := map[string]any{
+		"purpose":      "extract_facts",
+		"model":        e.model,
+		"raw_response": result.RawResponse,
+	}
 	if err != nil {
+		responsePayload["parse_error"] = err.Error()
+		e.emit(ctx, "ollama_response", "fact extraction response parse failed", responsePayload)
 		return nil, fmt.Errorf("parse fact extraction payload: %w", err)
 	}
+	responsePayload["parsed_payload"] = payload
+	e.emit(ctx, "ollama_response", "fact extraction response received", responsePayload)
 
 	preferredTopicRef := preferredTopicRef(newTopics, contextTopics)
 	facts := make([]FactCandidate, 0, len(payload.Facts))
@@ -187,7 +259,30 @@ Rules:
 			}
 		}
 	}
+	e.emit(ctx, "extract_facts_result", "fact extraction completed", map[string]any{
+		"facts": factCandidatesToPayload(facts),
+	})
 	return facts, nil
+}
+
+func (e *Extractor) emit(ctx context.Context, kind, summary string, payload map[string]any) {
+	if e == nil || e.telemetry == nil {
+		return
+	}
+	e.telemetry.Emit(ctx, telemetry.StageExtraction, kind, summary, payload)
+}
+
+func factCandidatesToPayload(facts []FactCandidate) []map[string]any {
+	out := make([]map[string]any, 0, len(facts))
+	for _, fact := range facts {
+		out = append(out, map[string]any{
+			"kind":       fact.Kind,
+			"about_ref":  fact.AboutRef,
+			"value_text": fact.ValueText,
+			"confidence": fact.Confidence,
+		})
+	}
+	return out
 }
 
 func buildTopicExtractionPrompt(currentMessage models.Message, extractionCtx models.ExtractionContext) string {
