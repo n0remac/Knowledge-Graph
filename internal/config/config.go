@@ -16,6 +16,7 @@ const (
 	defaultChatModel          = "qwen2.5:1.5b-instruct"
 	defaultPersona            = "You are a helpful Discord assistant."
 	defaultGraphStorePath     = "data/graph-store.json"
+	defaultGraphWebAddr       = "127.0.0.1:8080"
 	defaultRecentMessageLimit = 12
 	defaultRecallFactLimit    = 12
 	defaultRecallTopicLimit   = 8
@@ -29,6 +30,7 @@ type Config struct {
 	OllamaExtractModel string
 	Persona            string
 	GraphStorePath     string
+	GraphWebAddr       string
 	RecentMessageLimit int
 	RecallFactLimit    int
 	RecallTopicLimit   int
@@ -47,6 +49,7 @@ func Load() (Config, error) {
 	extractModel := readEnvOrDefault("OLLAMA_EXTRACT_MODEL", chatModel)
 	persona := readEnvOrDefault("BOT_PERSONA", defaultPersona)
 	graphStorePath := readEnvOrDefault("GRAPH_STORE_PATH", readEnvOrDefault("SQLITE_PATH", defaultGraphStorePath))
+	graphWebAddr := readEnvOrDefault("GRAPH_WEB_ADDR", defaultGraphWebAddr)
 
 	recentLimit, err := readIntEnv("RECENT_MESSAGE_LIMIT", defaultRecentMessageLimit)
 	if err != nil {
@@ -76,6 +79,7 @@ func Load() (Config, error) {
 		OllamaExtractModel: extractModel,
 		Persona:            persona,
 		GraphStorePath:     filepath.Clean(graphStorePath),
+		GraphWebAddr:       graphWebAddr,
 		RecentMessageLimit: recentLimit,
 		RecallFactLimit:    factLimit,
 		RecallTopicLimit:   topicLimit,

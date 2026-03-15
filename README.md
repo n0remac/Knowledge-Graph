@@ -24,6 +24,7 @@ For each non-bot message the bot can read:
 - `OLLAMA_EXTRACT_MODEL` (default: value of `OLLAMA_CHAT_MODEL`)
 - `BOT_PERSONA` (default: `You are a helpful Discord assistant.`)
 - `GRAPH_STORE_PATH` (default: `data/graph-store.json`)
+- `GRAPH_WEB_ADDR` (default: `127.0.0.1:8080`)
 - `SQLITE_PATH` (legacy fallback env var)
 - `RECENT_MESSAGE_LIMIT` (default: `12`)
 - `RECALL_FACT_LIMIT` (default: `12`)
@@ -46,6 +47,8 @@ export OLLAMA_BASE_URL=http://localhost:11434
 export OLLAMA_CHAT_MODEL=qwen2.5:1.5b-instruct
 go run .
 ```
+
+The graph viewer is available at `http://127.0.0.1:8080/graph` by default.
 
 ## Data model (v1, no vectors)
 
