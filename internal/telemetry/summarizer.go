@@ -25,14 +25,19 @@ func applyEventToSummary(summary *TraceSummary, event Event) {
 		event.Timestamp = time.Now().UTC()
 	}
 	summary.UpdatedAt = event.Timestamp
+	if message := payloadMap(event.Payload, "message"); message != nil {
+		summary.SourceMessage = mergeMaps(summary.SourceMessage, message)
+	}
 
 	switch event.Kind {
-	case "message_received":
-		summary.SourceMessage = cloneMap(payloadMap(event.Payload, "message"))
+	case "message_received", "assistant_message_ingested":
 	case "retrieve_for_extraction":
 		summary.ExtractionContext = cloneMap(event.Payload)
 	case "retrieve_for_generation":
 		summary.GenerationContext = cloneMap(event.Payload)
+	case "parallel_extraction_completed", "message_extraction_persisted":
+		summary.ExtractorStatuses = payloadStringMap(event.Payload, "extractor_statuses")
+		summary.MessageExtraction = cloneMap(payloadMap(event.Payload, "message_extraction"))
 	case "extract_topics_result":
 		summary.TopicCandidates = payloadStrings(event.Payload, "topics")
 	case "topics_resolved":
@@ -47,6 +52,11 @@ func applyEventToSummary(summary *TraceSummary, event Event) {
 		if edges := payloadMaps(event.Payload, "edges"); len(edges) > 0 {
 			summary.Edges = edges
 		}
+	case "working_state_updated":
+		summary.WorkingState = cloneMap(payloadMap(event.Payload, "working_state"))
+		summary.SummaryUpdateStatus = payloadString(event.Payload, "summary_update_status")
+	case "response_context_built":
+		summary.ResponseContext = cloneMap(payloadMap(event.Payload, "response_context"))
 	case "generate_reply_result", "reply_generated", "reply_sent":
 		summary.Reply = cloneMap(event.Payload)
 	}
@@ -66,6 +76,14 @@ func applyEventToSummary(summary *TraceSummary, event Event) {
 	switch event.Kind {
 	case "reply_sent":
 		summary.Status = "completed"
+	case "response_context_built":
+		if payloadString(summary.SourceMessage, "author_role") == "assistant" {
+			summary.Status = "completed"
+			return
+		}
+		if summary.Status == "" {
+			summary.Status = "in_progress"
+		}
 	case "reply_generated", "generate_reply_result":
 		if summary.Status == "" {
 			summary.Status = "in_progress"
@@ -74,6 +92,39 @@ func applyEventToSummary(summary *TraceSummary, event Event) {
 		if summary.Status == "" {
 			summary.Status = "in_progress"
 		}
+	}
+}
+
+func payloadStringMap(payload map[string]any, key string) map[string]string {
+	if payload == nil {
+		return nil
+	}
+	value, ok := payload[key]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case map[string]string:
+		out := make(map[string]string, len(typed))
+		for k, v := range typed {
+			out[k] = strings.TrimSpace(v)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]string, len(typed))
+		for k, v := range typed {
+			text := strings.TrimSpace(fmt.Sprint(v))
+			if text == "" {
+				continue
+			}
+			out[k] = text
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		return nil
 	}
 }
 
@@ -183,6 +234,17 @@ func cloneMap(input map[string]any) map[string]any {
 	}
 	out := make(map[string]any, len(input))
 	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func mergeMaps(base, update map[string]any) map[string]any {
+	if len(base) == 0 {
+		return cloneMap(update)
+	}
+	out := cloneMap(base)
+	for key, value := range update {
 		out[key] = value
 	}
 	return out

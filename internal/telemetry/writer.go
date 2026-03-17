@@ -81,8 +81,8 @@ func (w *Writer) writeEvent(event Event) (WrittenEvent, error) {
 	state.index.LatestStage = event.Stage
 	state.index.LatestKind = event.Kind
 	state.index.DroppedEventCount = w.droppedCount(event.TraceID)
-	if event.Kind == "message_received" {
-		state.index.SourceMessage = cloneMap(payloadMap(event.Payload, "message"))
+	if message := payloadMap(event.Payload, "message"); message != nil {
+		state.index.SourceMessage = mergeMaps(state.index.SourceMessage, message)
 	}
 
 	applyEventToSummary(&state.summary, event)

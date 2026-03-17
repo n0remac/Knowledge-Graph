@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -13,8 +12,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/n0remac/Knowledge-Graph/internal/config"
+	"github.com/n0remac/Knowledge-Graph/internal/conversation"
 	"github.com/n0remac/Knowledge-Graph/internal/generate"
-	"github.com/n0remac/Knowledge-Graph/internal/memory"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
 	"github.com/n0remac/Knowledge-Graph/internal/store"
@@ -23,18 +22,17 @@ import (
 
 const (
 	maxDiscordReplyRunes = 2000
-	maxTopicsPerMessage  = 2
 	botTestingChannel    = "bot-testing"
 )
 
 type Runtime struct {
-	cfg       config.Config
-	store     *store.Store
-	extractor *memory.Extractor
-	retriever *memory.Retriever
-	generator *generate.Generator
-	session   *discordgo.Session
-	telemetry *telemetry.Manager
+	cfg               config.Config
+	store             *store.Store
+	conversationStore *conversation.Store
+	engine            *conversation.Engine
+	generator         *generate.Generator
+	session           *discordgo.Session
+	telemetry         *telemetry.Manager
 }
 
 func NewRuntime(cfg config.Config) (*Runtime, error) {
@@ -49,24 +47,30 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 		return nil, err
 	}
 
-	db, err := store.NewGraph(cfg.GraphStorePath, manager)
+	graphStore, err := store.NewGraph(cfg.GraphStorePath, manager)
 	if err != nil {
 		_ = manager.Close()
 		return nil, err
 	}
+	conversationStore, err := conversation.NewStore(cfg.ConversationStorePath, manager)
+	if err != nil {
+		_ = graphStore.Close()
+		_ = manager.Close()
+		return nil, err
+	}
+
 	llmClient := ollama.NewClient(cfg.OllamaBaseURL, cfg.RequestTimeout)
-	extractor := memory.NewExtractor(llmClient, cfg.OllamaExtractModel, manager)
-	retriever := memory.NewRetriever(db, cfg.RecentMessageLimit, cfg.RecallFactLimit, cfg.RecallTopicLimit, manager)
+	engine := conversation.NewEngine(conversationStore, llmClient, cfg.OllamaExtractModel, cfg.RequestTimeout, manager)
 	generator := generate.NewGenerator(llmClient, cfg.OllamaChatModel, cfg.Persona, manager)
 
 	runtime := &Runtime{
-		cfg:       cfg,
-		store:     db,
-		extractor: extractor,
-		retriever: retriever,
-		generator: generator,
-		session:   session,
-		telemetry: manager,
+		cfg:               cfg,
+		store:             graphStore,
+		conversationStore: conversationStore,
+		engine:            engine,
+		generator:         generator,
+		session:           session,
+		telemetry:         manager,
 	}
 
 	session.AddHandler(runtime.onReady)
@@ -76,9 +80,10 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 
 func (r *Runtime) Run() error {
 	log.Printf(
-		"startup mode=%q graph_store_path=%q ollama_base_url=%q chat_model=%q extract_model=%q",
-		"graph-recall",
+		"startup mode=%q graph_store_path=%q conversation_store_path=%q ollama_base_url=%q chat_model=%q extract_model=%q",
+		"conversation-state",
 		r.cfg.GraphStorePath,
+		r.cfg.ConversationStorePath,
 		r.cfg.OllamaBaseURL,
 		r.cfg.OllamaChatModel,
 		r.cfg.OllamaExtractModel,
@@ -91,7 +96,7 @@ func (r *Runtime) Run() error {
 		_ = r.session.Close()
 	}()
 
-	log.Printf("discord connection established; graph memory loop active")
+	log.Printf("discord connection established; live conversation state loop active")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
@@ -107,6 +112,11 @@ func (r *Runtime) Close() error {
 				log.Printf("telemetry shutdown error: %v", err)
 			}
 		}()
+	}
+	if r.conversationStore != nil {
+		if err := r.conversationStore.Close(); err != nil {
+			return err
+		}
 	}
 	if r.store != nil {
 		return r.store.Close()
@@ -127,7 +137,6 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	if event.Author == nil || event.Author.Bot {
 		return
 	}
-
 	if !isBotTestingChannel(session, event.ChannelID) {
 		return
 	}
@@ -136,7 +145,6 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	if content == "" {
 		return
 	}
-	mentionedUserIDs := extractMentionIDs(event)
 
 	timestamp := time.Now().UTC()
 	if !event.Timestamp.IsZero() {
@@ -148,141 +156,71 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 		replyToID = event.Message.Reference().MessageID
 	}
 
-	message := models.Message{
-		ID:               event.ID,
-		ChannelID:        event.ChannelID,
-		GuildID:          event.GuildID,
+	message := models.RawMessage{
+		MessageID:        event.ID,
+		ConversationID:   event.ChannelID,
 		AuthorID:         event.Author.ID,
-		Author:           event.Author.Username,
-		MentionedUserIDs: mentionedUserIDs,
+		AuthorRole:       "user",
 		Content:          content,
-		Timestamp:        timestamp,
-		ReplyToID:        replyToID,
+		TimestampUnixMs:  timestamp.UnixMilli(),
+		ReplyToMessageID: replyToID,
 	}
 
 	log.Printf(
 		"event=message message_id=%q guild_id=%q channel_id=%q author_id=%q content=%q",
-		message.ID, message.GuildID, message.ChannelID, message.AuthorID, message.Content,
+		message.MessageID, event.GuildID, message.ConversationID, message.AuthorID, message.Content,
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.RequestTimeout)
 	defer cancel()
-	ctx = telemetry.WithTraceID(ctx, message.ID)
+	ctx = telemetry.WithTraceID(ctx, message.MessageID)
 
 	r.emit(ctx, telemetry.StageRuntime, "message_received", "discord message received", map[string]any{
-		"message": map[string]any{
-			"id":                  message.ID,
-			"channel_id":          message.ChannelID,
-			"guild_id":            message.GuildID,
-			"author_id":           message.AuthorID,
-			"author_username":     event.Author.Username,
-			"author_display_name": event.Author.GlobalName,
-			"content":             message.Content,
-			"reply_to_id":         message.ReplyToID,
-			"mentioned_user_ids":  message.MentionedUserIDs,
-			"timestamp":           message.Timestamp,
-		},
+		"message": messageTelemetryPayload(message, event.GuildID, event.Author.Username, event.Author.GlobalName),
 	})
 
-	if err := r.store.UpsertUser(ctx, message.AuthorID, event.Author.Username, event.Author.GlobalName, message.Timestamp); err != nil {
-		log.Printf("event=store_user_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "store_user_error", "failed to upsert author", err, nil)
-	}
-	if err := r.store.SaveMessage(ctx, message); err != nil {
-		log.Printf("event=store_message_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "store_message_error", "failed to save source message", err, nil)
-	} else {
-		r.emit(ctx, telemetry.StageRuntime, "message_saved", "source message persisted", map[string]any{
-			"message_id": message.ID,
-		})
-	}
-	if _, ok := r.persistEdge(ctx, models.EdgeInput{
-		FromType: "user",
-		FromID:   message.AuthorID,
-		EdgeType: "SENT",
-		ToType:   "message",
-		ToID:     message.ID,
-	}, message.Timestamp, message.ID); ok {
-		r.emit(ctx, telemetry.StageRuntime, "sent_edge_persisted", "author-to-message sent edge persisted", map[string]any{
-			"message_id": message.ID,
-			"author_id":  message.AuthorID,
-		})
+	var replyTarget *models.RawMessage
+	if event.Message != nil && event.Message.ReferencedMessage != nil {
+		referenced := event.Message.ReferencedMessage
+		referencedTimestamp := time.Now().UTC().UnixMilli()
+		if !referenced.Timestamp.IsZero() {
+			referencedTimestamp = referenced.Timestamp.UnixMilli()
+		}
+		replyTarget = &models.RawMessage{
+			MessageID:        referenced.ID,
+			ConversationID:   referenced.ChannelID,
+			AuthorID:         referenced.Author.ID,
+			AuthorRole:       referencedAuthorRole(referenced.Author, session),
+			Content:          strings.TrimSpace(referenced.Content),
+			TimestampUnixMs:  referencedTimestamp,
+			ReplyToMessageID: "",
+		}
 	}
 
-	extractionCtx, err := r.retriever.RetrieveForExtraction(ctx, memory.RetrieveForExtractionInput{
-		ChannelID: message.ChannelID,
-		SpeakerID: message.AuthorID,
-		ReplyToID: message.ReplyToID,
-	})
+	result, err := r.engine.ProcessMessage(ctx, message, conversation.ProcessOptions{ReplyTarget: replyTarget})
 	if err != nil {
-		log.Printf("event=extract_context_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "extract_context_error", "failed to build extraction context", err, nil)
-		extractionCtx = models.ExtractionContext{}
-	} else {
-		r.emit(ctx, telemetry.StageRuntime, "extraction_context_retrieved", "extraction context retrieved", map[string]any{
-			"counts": map[string]any{
-				"recent_messages":      len(extractionCtx.RecentMessages),
-				"recent_topics":        len(extractionCtx.RecentTopics),
-				"recent_durable_facts": len(extractionCtx.RecentDurableFacts),
-				"has_reply_message":    extractionCtx.ReplyMessage != nil,
-			},
-		})
+		log.Printf("event=conversation_process_error message_id=%q err=%q", message.MessageID, err.Error())
+		r.emitError(ctx, telemetry.StageRuntime, "conversation_process_error", "failed to update live conversation state", err, nil)
+		_, sendErr := session.ChannelMessageSend(message.ConversationID, "I couldn't update my conversation state right now.")
+		if sendErr != nil {
+			log.Printf("event=send_error message_id=%q err=%q", message.MessageID, sendErr.Error())
+			r.emitError(ctx, telemetry.StageRuntime, "send_error", "failed to send conversation fallback reply", sendErr, nil)
+		}
+		return
 	}
 
-	topicCandidates, err := r.extractor.ExtractTopics(ctx, message, extractionCtx)
-	if err != nil {
-		log.Printf("event=topic_extract_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "topic_extract_error", "topic extraction failed", err, nil)
-	}
-	resolvedNewTopics := r.resolveAndPersistTopics(ctx, message, topicCandidates)
-
-	factCandidates, err := r.extractor.ExtractFacts(ctx, message, resolvedNewTopics, extractionCtx.RecentTopics, extractionCtx)
-	if err != nil {
-		log.Printf("event=fact_extract_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "fact_extract_error", "fact extraction failed", err, nil)
-	}
-	r.resolveAndPersistFacts(ctx, message, factCandidates, resolvedNewTopics, extractionCtx.RecentTopics)
-
-	if err := r.store.Flush(); err != nil {
-		log.Printf("event=store_flush_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "store_flush_error", "graph store flush failed", err, nil)
-	} else {
-		r.emit(ctx, telemetry.StageRuntime, "store_flushed", "graph store flushed", map[string]any{
-			"message_id": message.ID,
-		})
-	}
-
-	bundle, err := r.retriever.Retrieve(ctx, memory.RetrieveInput{
-		ChannelID: message.ChannelID,
-		SpeakerID: message.AuthorID,
-	})
-	if err != nil {
-		log.Printf("event=retrieve_error message_id=%q err=%q", message.ID, err.Error())
-		r.emitError(ctx, telemetry.StageRuntime, "retrieve_error", "generation retrieval failed", err, nil)
-		bundle = models.RetrievalBundle{}
-	} else {
-		r.emit(ctx, telemetry.StageRuntime, "generation_bundle_retrieved", "generation bundle retrieved", map[string]any{
-			"counts": map[string]any{
-				"recent_messages": len(bundle.RecentMessages),
-				"user_facts":      len(bundle.UserFacts),
-				"topic_facts":     len(bundle.TopicFacts),
-				"topics":          len(bundle.Topics),
-			},
-		})
-	}
-
-	if err := session.ChannelTyping(message.ChannelID); err != nil {
-		log.Printf("event=typing_error message_id=%q err=%q", message.ID, err.Error())
+	if err := session.ChannelTyping(message.ConversationID); err != nil {
+		log.Printf("event=typing_error message_id=%q err=%q", message.MessageID, err.Error())
 		r.emitError(ctx, telemetry.StageRuntime, "typing_error", "failed to send typing indicator", err, nil)
 	}
 
-	reply, err := r.generator.GenerateReply(ctx, message, bundle)
+	reply, err := r.generator.GenerateReplyFromBrief(ctx, result.Message, result.ResponseContext.Brief)
 	if err != nil {
-		log.Printf("event=generate_error message_id=%q err=%q", message.ID, err.Error())
+		log.Printf("event=generate_error message_id=%q err=%q", message.MessageID, err.Error())
 		r.emitError(ctx, telemetry.StageRuntime, "generate_error", "reply generation failed", err, nil)
-		_, sendErr := session.ChannelMessageSend(message.ChannelID, "I couldn't generate a response right now.")
+		_, sendErr := session.ChannelMessageSend(message.ConversationID, "I couldn't generate a response right now.")
 		if sendErr != nil {
-			log.Printf("event=send_error message_id=%q err=%q", message.ID, sendErr.Error())
+			log.Printf("event=send_error message_id=%q err=%q", message.MessageID, sendErr.Error())
 			r.emitError(ctx, telemetry.StageRuntime, "send_error", "failed to send generation fallback reply", sendErr, nil)
 		}
 		return
@@ -299,250 +237,115 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 		})
 		return
 	}
-	if _, err := session.ChannelMessageSend(message.ChannelID, reply); err != nil {
-		log.Printf("event=send_error message_id=%q err=%q", message.ID, err.Error())
+
+	sentMessage, err := session.ChannelMessageSend(message.ConversationID, reply)
+	if err != nil {
+		log.Printf("event=send_error message_id=%q err=%q", message.MessageID, err.Error())
 		r.emitError(ctx, telemetry.StageRuntime, "send_error", "failed to send reply", err, map[string]any{
 			"reply_length": len([]rune(reply)),
 		})
 		return
 	}
-	log.Printf("event=reply_sent source_message_id=%q reply_len=%d", message.ID, len([]rune(reply)))
+	log.Printf("event=reply_sent source_message_id=%q reply_len=%d", message.MessageID, len([]rune(reply)))
 	r.emit(ctx, telemetry.StageRuntime, "reply_sent", "reply sent to discord", map[string]any{
 		"reply":        reply,
 		"reply_length": len([]rune(reply)),
 	})
+
+	r.ingestAssistantReply(message, result.Message, sentMessage)
 }
 
-func (r *Runtime) resolveAndPersistTopics(ctx context.Context, sourceMessage models.Message, topicCandidates []string) []models.Topic {
-	resolved := make([]models.Topic, 0, len(topicCandidates))
-	seen := make(map[int64]struct{}, len(topicCandidates))
-	resolvedPayload := make([]map[string]any, 0, len(topicCandidates))
-	for _, topicName := range topicCandidates {
-		if len(resolved) >= maxTopicsPerMessage {
-			break
-		}
-
-		topicName = normalizeTopicForResolution(topicName)
-		if topicName == "" || isGenericTopic(topicName) {
-			continue
-		}
-
-		topic, err := r.store.UpsertTopic(ctx, topicName, sourceMessage.Timestamp)
-		if err != nil {
-			log.Printf("event=topic_upsert_error message_id=%q topic=%q err=%q", sourceMessage.ID, topicName, err.Error())
-			r.emitError(ctx, telemetry.StageResolution, "topic_upsert_error", "failed to upsert topic", err, map[string]any{"topic_name": topicName})
-			continue
-		}
-		if _, ok := seen[topic.ID]; ok {
-			continue
-		}
-		seen[topic.ID] = struct{}{}
-		resolved = append(resolved, topic)
-
-		if err := r.store.LinkMessageTopic(ctx, sourceMessage.ID, topic.ID); err != nil {
-			log.Printf("event=topic_link_error message_id=%q topic_id=%d err=%q", sourceMessage.ID, topic.ID, err.Error())
-			r.emitError(ctx, telemetry.StageResolution, "topic_link_error", "failed to link message to topic", err, map[string]any{"topic_id": topic.ID})
-			continue
-		}
-		r.persistEdge(ctx, models.EdgeInput{
-			FromType: "message",
-			FromID:   sourceMessage.ID,
-			EdgeType: "MENTIONS_TOPIC",
-			ToType:   "topic",
-			ToID:     strconv.FormatInt(topic.ID, 10),
-		}, sourceMessage.Timestamp, sourceMessage.ID)
-		resolvedPayload = append(resolvedPayload, map[string]any{
-			"id":   topic.ID,
-			"name": topic.Name,
-		})
+func (r *Runtime) ingestAssistantReply(source models.RawMessage, replyTarget models.RawMessage, sent *discordgo.Message) {
+	if sent == nil {
+		return
 	}
-	r.emit(ctx, telemetry.StageResolution, "topics_resolved", "topic candidates resolved and linked", map[string]any{
-		"topic_candidates": topicCandidates,
-		"topics":           resolvedPayload,
+
+	content := strings.TrimSpace(sent.Content)
+	if content == "" {
+		return
+	}
+
+	timestamp := time.Now().UTC()
+	if !sent.Timestamp.IsZero() {
+		timestamp = sent.Timestamp
+	}
+
+	authorID := "assistant"
+	if sent.Author != nil && strings.TrimSpace(sent.Author.ID) != "" {
+		authorID = sent.Author.ID
+	} else if r.session != nil && r.session.State != nil && r.session.State.User != nil && strings.TrimSpace(r.session.State.User.ID) != "" {
+		authorID = r.session.State.User.ID
+	}
+
+	assistantMessage := models.RawMessage{
+		MessageID:        sent.ID,
+		ConversationID:   source.ConversationID,
+		AuthorID:         authorID,
+		AuthorRole:       "assistant",
+		Content:          content,
+		TimestampUnixMs:  timestamp.UnixMilli(),
+		ReplyToMessageID: source.MessageID,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), r.cfg.RequestTimeout)
+	defer cancel()
+	ctx = telemetry.WithTraceID(ctx, assistantMessage.MessageID)
+
+	r.emit(ctx, telemetry.StageRuntime, "assistant_message_ingested", "assistant reply queued for working state update", map[string]any{
+		"message": messageTelemetryPayload(assistantMessage, sent.GuildID, assistantLabel(sent.Author), ""),
 	})
-	return resolved
-}
 
-func (r *Runtime) resolveAndPersistFacts(ctx context.Context, sourceMessage models.Message, factCandidates []memory.FactCandidate, newTopics, contextTopics []models.Topic) {
-	persisted := make([]map[string]any, 0, len(factCandidates))
-	edges := make([]map[string]any, 0, len(factCandidates)*3)
-	for _, candidate := range factCandidates {
-		aboutType, aboutID, ok := resolveAboutRef(candidate.AboutRef, sourceMessage.AuthorID, newTopics, contextTopics)
-		if !ok {
-			r.emit(ctx, telemetry.StageResolution, "invalid_about_ref_error", "fact candidate referenced an invalid target", map[string]any{
-				"error":     "invalid about_ref",
-				"candidate": factCandidatePayloadMap(candidate),
-			})
-			continue
-		}
-		if aboutType == "user" && shouldPreferTopicFact(candidate.Kind) {
-			if topicType, topicID, topicOK := firstTopicTarget(newTopics, contextTopics); topicOK {
-				aboutType = topicType
-				aboutID = topicID
-			}
-		}
-
-		fact, err := r.store.UpsertFactFromMessage(ctx, models.FactInput{
-			DiscordUserID: sourceMessage.AuthorID,
-			Kind:          candidate.Kind,
-			ValueText:     candidate.ValueText,
-			AboutType:     aboutType,
-			AboutID:       aboutID,
-			Confidence:    candidate.Confidence,
-		}, sourceMessage.ID, r.cfg.OllamaExtractModel, sourceMessage.Timestamp)
-		if err != nil {
-			log.Printf("event=fact_upsert_error message_id=%q kind=%q err=%q", sourceMessage.ID, candidate.Kind, err.Error())
-			r.emitError(ctx, telemetry.StageResolution, "fact_upsert_error", "failed to upsert fact candidate", err, map[string]any{
-				"candidate": factCandidatePayloadMap(candidate),
-			})
-			continue
-		}
-		persisted = append(persisted, map[string]any{
-			"id":              fact.ID,
-			"kind":            fact.Kind,
-			"value_text":      fact.ValueText,
-			"about_type":      fact.AboutType,
-			"about_id":        fact.AboutID,
-			"confidence":      fact.Confidence,
-			"status":          fact.Status,
-			"candidate_input": factCandidatePayloadMap(candidate),
-		})
-
-		factID := strconv.FormatInt(fact.ID, 10)
-		if edge, ok := r.persistEdge(ctx, models.EdgeInput{
-			FromType: "message",
-			FromID:   sourceMessage.ID,
-			EdgeType: "DERIVED_FACT",
-			ToType:   "fact",
-			ToID:     factID,
-		}, sourceMessage.Timestamp, sourceMessage.ID); ok {
-			edges = append(edges, edgePayload(edge))
-		}
-		if edge, ok := r.persistEdge(ctx, models.EdgeInput{
-			FromType: "fact",
-			FromID:   factID,
-			EdgeType: "FACT_FOR_USER",
-			ToType:   "user",
-			ToID:     sourceMessage.AuthorID,
-		}, sourceMessage.Timestamp, sourceMessage.ID); ok {
-			edges = append(edges, edgePayload(edge))
-		}
-		if fact.AboutType == "topic" {
-			if edge, ok := r.persistEdge(ctx, models.EdgeInput{
-				FromType: "fact",
-				FromID:   factID,
-				EdgeType: "FACT_ABOUT_TOPIC",
-				ToType:   "topic",
-				ToID:     fact.AboutID,
-			}, sourceMessage.Timestamp, sourceMessage.ID); ok {
-				edges = append(edges, edgePayload(edge))
-			}
-		}
-	}
-	r.emit(ctx, telemetry.StageResolution, "facts_resolved", "fact candidates resolved and persisted", map[string]any{
-		"fact_candidates": factCandidatesPayload(factCandidates),
-		"facts":           persisted,
-		"edges":           edges,
-	})
-}
-
-func (r *Runtime) persistEdge(ctx context.Context, input models.EdgeInput, observedAt time.Time, messageID string) (models.Edge, bool) {
-	edge, err := r.store.UpsertEdge(ctx, input, observedAt)
-	if err != nil {
-		log.Printf("event=edge_upsert_error message_id=%q edge_type=%q err=%q", messageID, input.EdgeType, err.Error())
-		r.emitError(ctx, telemetry.StageResolution, "edge_upsert_error", "failed to upsert edge", err, map[string]any{
-			"edge_type": input.EdgeType,
-			"input":     input,
-		})
-		return models.Edge{}, false
-	}
-	return edge, true
-}
-
-func resolveAboutRef(rawRef, speakerID string, newTopics, contextTopics []models.Topic) (string, string, bool) {
-	ref := strings.ToLower(strings.TrimSpace(rawRef))
-	switch {
-	case ref == "user":
-		return "user", speakerID, true
-	case strings.HasPrefix(ref, "new_topic:"):
-		index, ok := parseTopicRefIndex(strings.TrimPrefix(ref, "new_topic:"))
-		if !ok || index >= len(newTopics) {
-			return "", "", false
-		}
-		return "topic", strconv.FormatInt(newTopics[index].ID, 10), true
-	case strings.HasPrefix(ref, "context_topic:"):
-		index, ok := parseTopicRefIndex(strings.TrimPrefix(ref, "context_topic:"))
-		if !ok || index >= len(contextTopics) {
-			return "", "", false
-		}
-		return "topic", strconv.FormatInt(contextTopics[index].ID, 10), true
-	default:
-		return "", "", false
+	if _, err := r.engine.ProcessMessage(ctx, assistantMessage, conversation.ProcessOptions{ReplyTarget: &replyTarget}); err != nil {
+		log.Printf("event=assistant_ingest_error message_id=%q err=%q", assistantMessage.MessageID, err.Error())
+		r.emitError(ctx, telemetry.StageRuntime, "assistant_ingest_error", "failed to process assistant reply into working state", err, nil)
 	}
 }
 
-func parseTopicRefIndex(raw string) (int, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, false
+func referencedAuthorRole(author *discordgo.User, session *discordgo.Session) string {
+	if author == nil {
+		return "user"
 	}
-	index, err := strconv.Atoi(raw)
-	if err != nil || index < 0 {
-		return 0, false
+	if session != nil && session.State != nil && session.State.User != nil && author.ID == session.State.User.ID {
+		return "assistant"
 	}
-	return index, true
+	if author.Bot {
+		return "assistant"
+	}
+	return "user"
 }
 
-func normalizeTopicForResolution(input string) string {
-	input = strings.ToLower(strings.TrimSpace(input))
-	input = strings.Join(strings.Fields(input), " ")
-	input = strings.TrimPrefix(input, "the ")
-	return input
+func assistantLabel(author *discordgo.User) string {
+	if author == nil {
+		return "assistant"
+	}
+	if strings.TrimSpace(author.Username) != "" {
+		return author.Username
+	}
+	return "assistant"
 }
 
-func isGenericTopic(topic string) bool {
-	switch topic {
-	case "", "technology", "tech", "software", "development", "project", "projects", "goal", "goals", "coding", "assistant", "conversation":
-		return true
-	default:
-		return false
+func messageTelemetryPayload(message models.RawMessage, guildID, authorUsername, authorDisplayName string) map[string]any {
+	payload := map[string]any{
+		"id":                  message.MessageID,
+		"conversation_id":     message.ConversationID,
+		"channel_id":          message.ConversationID,
+		"guild_id":            guildID,
+		"author_id":           message.AuthorID,
+		"author_role":         message.AuthorRole,
+		"author_username":     authorUsername,
+		"author_display_name": authorDisplayName,
+		"content":             message.Content,
+		"reply_to_id":         message.ReplyToMessageID,
+		"sequence_number":     message.SequenceNumber,
+		"timestamp_unix_ms":   message.TimestampUnixMs,
 	}
-}
-
-func shouldPreferTopicFact(kind string) bool {
-	kind = strings.ToLower(strings.TrimSpace(kind))
-	switch kind {
-	case "goal", "project", "status", "preference":
-		return true
-	default:
-		return false
+	if payload["author_username"] == "" {
+		delete(payload, "author_username")
 	}
-}
-
-func firstTopicTarget(newTopics, contextTopics []models.Topic) (string, string, bool) {
-	if len(newTopics) > 0 {
-		return "topic", strconv.FormatInt(newTopics[0].ID, 10), true
+	if payload["author_display_name"] == "" {
+		delete(payload, "author_display_name")
 	}
-	if len(contextTopics) > 0 {
-		return "topic", strconv.FormatInt(contextTopics[0].ID, 10), true
-	}
-	return "", "", false
-}
-
-func extractMentionIDs(event *discordgo.MessageCreate) []string {
-	seen := map[string]struct{}{}
-	var ids []string
-	for _, user := range event.Mentions {
-		if user == nil || user.Bot {
-			continue
-		}
-		if _, ok := seen[user.ID]; ok {
-			continue
-		}
-		seen[user.ID] = struct{}{}
-		ids = append(ids, user.ID)
-	}
-	return ids
+	return payload
 }
 
 func trimToDiscordLimit(input string) string {
@@ -594,34 +397,4 @@ func (r *Runtime) emitError(ctx context.Context, stage, kind, summary string, er
 		payload["error"] = err.Error()
 	}
 	r.emit(ctx, stage, kind, summary, payload)
-}
-
-func factCandidatePayloadMap(candidate memory.FactCandidate) map[string]any {
-	return map[string]any{
-		"kind":       candidate.Kind,
-		"about_ref":  candidate.AboutRef,
-		"value_text": candidate.ValueText,
-		"confidence": candidate.Confidence,
-	}
-}
-
-func factCandidatesPayload(candidates []memory.FactCandidate) []map[string]any {
-	out := make([]map[string]any, 0, len(candidates))
-	for _, candidate := range candidates {
-		out = append(out, factCandidatePayloadMap(candidate))
-	}
-	return out
-}
-
-func edgePayload(edge models.Edge) map[string]any {
-	return map[string]any{
-		"id":         edge.ID,
-		"from_type":  edge.FromType,
-		"from_id":    edge.FromID,
-		"edge_type":  edge.EdgeType,
-		"to_type":    edge.ToType,
-		"to_id":      edge.ToID,
-		"created_at": edge.CreatedAt,
-		"last_seen":  edge.LastSeenAt,
-	}
 }

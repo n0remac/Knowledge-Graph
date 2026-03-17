@@ -12,30 +12,32 @@ import (
 )
 
 const (
-	defaultOllamaBaseURL      = "http://localhost:11434"
-	defaultChatModel          = "qwen2.5:1.5b-instruct"
-	defaultPersona            = "You are a helpful Discord assistant."
-	defaultGraphStorePath     = "data/graph-store.json"
-	defaultGraphWebAddr       = "127.0.0.1:8080"
-	defaultRecentMessageLimit = 12
-	defaultRecallFactLimit    = 12
-	defaultRecallTopicLimit   = 8
-	defaultRequestTimeoutSec  = 45
+	defaultOllamaBaseURL         = "http://localhost:11434"
+	defaultChatModel             = "qwen2.5:1.5b-instruct"
+	defaultPersona               = "You are a helpful Discord assistant."
+	defaultGraphStorePath        = "data/graph-store.json"
+	defaultConversationStorePath = "data/conversation-state.json"
+	defaultGraphWebAddr          = "127.0.0.1:8080"
+	defaultRecentMessageLimit    = 12
+	defaultRecallFactLimit       = 12
+	defaultRecallTopicLimit      = 8
+	defaultRequestTimeoutSec     = 45
 )
 
 type Config struct {
-	DiscordBotToken    string
-	OllamaBaseURL      string
-	OllamaChatModel    string
-	OllamaExtractModel string
-	Persona            string
-	GraphStorePath     string
-	GraphWebAddr       string
-	RecentMessageLimit int
-	RecallFactLimit    int
-	RecallTopicLimit   int
-	RequestTimeout     time.Duration
-	Telemetry          telemetry.Config
+	DiscordBotToken       string
+	OllamaBaseURL         string
+	OllamaChatModel       string
+	OllamaExtractModel    string
+	Persona               string
+	GraphStorePath        string
+	ConversationStorePath string
+	GraphWebAddr          string
+	RecentMessageLimit    int
+	RecallFactLimit       int
+	RecallTopicLimit      int
+	RequestTimeout        time.Duration
+	Telemetry             telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -49,6 +51,7 @@ func Load() (Config, error) {
 	extractModel := readEnvOrDefault("OLLAMA_EXTRACT_MODEL", chatModel)
 	persona := readEnvOrDefault("BOT_PERSONA", defaultPersona)
 	graphStorePath := readEnvOrDefault("GRAPH_STORE_PATH", readEnvOrDefault("SQLITE_PATH", defaultGraphStorePath))
+	conversationStorePath := readEnvOrDefault("CONVERSATION_STORE_PATH", defaultConversationStorePath)
 	graphWebAddr := readEnvOrDefault("GRAPH_WEB_ADDR", defaultGraphWebAddr)
 
 	recentLimit, err := readIntEnv("RECENT_MESSAGE_LIMIT", defaultRecentMessageLimit)
@@ -73,18 +76,19 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		DiscordBotToken:    token,
-		OllamaBaseURL:      strings.TrimRight(baseURL, "/"),
-		OllamaChatModel:    chatModel,
-		OllamaExtractModel: extractModel,
-		Persona:            persona,
-		GraphStorePath:     filepath.Clean(graphStorePath),
-		GraphWebAddr:       graphWebAddr,
-		RecentMessageLimit: recentLimit,
-		RecallFactLimit:    factLimit,
-		RecallTopicLimit:   topicLimit,
-		RequestTimeout:     time.Duration(timeoutSec) * time.Second,
-		Telemetry:          telemetryCfg,
+		DiscordBotToken:       token,
+		OllamaBaseURL:         strings.TrimRight(baseURL, "/"),
+		OllamaChatModel:       chatModel,
+		OllamaExtractModel:    extractModel,
+		Persona:               persona,
+		GraphStorePath:        filepath.Clean(graphStorePath),
+		ConversationStorePath: filepath.Clean(conversationStorePath),
+		GraphWebAddr:          graphWebAddr,
+		RecentMessageLimit:    recentLimit,
+		RecallFactLimit:       factLimit,
+		RecallTopicLimit:      topicLimit,
+		RequestTimeout:        time.Duration(timeoutSec) * time.Second,
+		Telemetry:             telemetryCfg,
 	}, nil
 }
 

@@ -1,0 +1,651 @@
+package conversation
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/n0remac/Knowledge-Graph/internal/models"
+	"github.com/n0remac/Knowledge-Graph/internal/ollama"
+)
+
+type promptEnvelope struct {
+	CurrentMessage models.RawMessage
+	ReplyTarget    *models.RawMessage
+	RecentMessages []models.RawMessage
+	WorkingState   models.WorkingState
+}
+
+type extractionDimension struct {
+	Name      string
+	Status    string
+	Raw       string
+	Model     string
+	Err       error
+	Claims    []models.Claim
+	Questions []models.OpenQuestion
+	Topics    []models.TopicRef
+	Pronouns  []models.PronounResolution
+	Summary   string
+}
+
+type summaryUpdateResult struct {
+	Status  string
+	Raw     string
+	Model   string
+	Err     error
+	Summary string
+}
+
+type claimsPayload struct {
+	Claims []claimPayload `json:"claims"`
+}
+
+type claimPayload struct {
+	Subject   string `json:"subject"`
+	Predicate string `json:"predicate"`
+	Object    string `json:"object"`
+}
+
+type questionsPayload struct {
+	Questions []questionPayload `json:"questions"`
+}
+
+type questionPayload struct {
+	Text string `json:"text"`
+}
+
+type topicsPayload struct {
+	Topics []string `json:"topics"`
+}
+
+type pronounsPayload struct {
+	Bindings []pronounPayload `json:"bindings"`
+}
+
+type pronounPayload struct {
+	Expression string  `json:"expression"`
+	Referent   string  `json:"referent"`
+	Confidence float64 `json:"confidence"`
+}
+
+type summaryPayload struct {
+	Summary string `json:"summary"`
+}
+
+type rollingSummaryPayload struct {
+	RollingSummary string `json:"rolling_summary"`
+}
+
+func (e *Engine) extractClaims(ctx context.Context, envelope promptEnvelope) extractionDimension {
+	systemPrompt := `You extract lightweight conversational claims.
+Return ONLY valid JSON with this exact schema:
+{
+  "claims": [
+    {
+      "subject": "who or what",
+      "predicate": "relationship or action",
+      "object": "target or value"
+    }
+  ]
+}
+
+Rules:
+- Extract at most 4 claims.
+- Keep claims concise and literal.
+- Use only information grounded in the current message plus the provided short context.
+- Prefer claims that help maintain short-term continuity.
+- If there are no meaningful claims, return {"claims":[]}.`
+
+	userPrompt := buildSharedPromptEnvelope(envelope)
+	raw, model, err := e.callLLM(ctx, "extract_claims", systemPrompt, userPrompt)
+	if err != nil {
+		return extractionDimension{Name: "claims", Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	claims, status, parseErr := parseClaimsPayload(raw, envelope.CurrentMessage.MessageID)
+	if parseErr != nil {
+		return extractionDimension{Name: "claims", Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return extractionDimension{Name: "claims", Status: status, Raw: raw, Model: model, Claims: claims}
+}
+
+func (e *Engine) extractQuestions(ctx context.Context, envelope promptEnvelope) extractionDimension {
+	systemPrompt := `You extract open questions that matter for conversational continuity.
+Return ONLY valid JSON with this exact schema:
+{
+  "questions": [
+    {
+      "text": "open question"
+    }
+  ]
+}
+
+Rules:
+- Include explicit or strongly implied questions that remain unresolved after this message.
+- Extract at most 3 questions.
+- Keep text concise and readable.
+- If there are no meaningful open questions, return {"questions":[]}.`
+
+	userPrompt := buildSharedPromptEnvelope(envelope)
+	raw, model, err := e.callLLM(ctx, "extract_questions", systemPrompt, userPrompt)
+	if err != nil {
+		return extractionDimension{Name: "questions", Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	questions, status, parseErr := parseQuestionsPayload(raw, envelope.CurrentMessage.MessageID)
+	if parseErr != nil {
+		return extractionDimension{Name: "questions", Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return extractionDimension{Name: "questions", Status: status, Raw: raw, Model: model, Questions: questions}
+}
+
+func (e *Engine) extractTopics(ctx context.Context, envelope promptEnvelope) extractionDimension {
+	systemPrompt := `You extract active conversational topics.
+Return ONLY valid JSON with this exact schema:
+{
+  "topics": ["topic"]
+}
+
+Rules:
+- Return short normalized topic names.
+- Prefer 1 to 4 topics.
+- Keep topics at the level of current conversation threads, not generic domains.
+- If there are no meaningful active topics, return {"topics":[]}.`
+
+	userPrompt := buildSharedPromptEnvelope(envelope)
+	raw, model, err := e.callLLM(ctx, "extract_topics", systemPrompt, userPrompt)
+	if err != nil {
+		return extractionDimension{Name: "topics", Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	topics, status, parseErr := parseTopicsPayload(raw)
+	if parseErr != nil {
+		return extractionDimension{Name: "topics", Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return extractionDimension{Name: "topics", Status: status, Raw: raw, Model: model, Topics: topics}
+}
+
+func (e *Engine) extractPronouns(ctx context.Context, envelope promptEnvelope) extractionDimension {
+	systemPrompt := `You resolve local references for conversational continuity.
+Return ONLY valid JSON with this exact schema:
+{
+  "bindings": [
+    {
+      "expression": "it",
+      "referent": "specific referent",
+      "confidence": 0.0
+    }
+  ]
+}
+
+Rules:
+- Include only bindings supported by the provided context.
+- Use confidence between 0.0 and 1.0.
+- Extract at most 4 bindings.
+- If nothing needs resolution, return {"bindings":[]}.`
+
+	userPrompt := buildSharedPromptEnvelope(envelope)
+	raw, model, err := e.callLLM(ctx, "extract_pronouns", systemPrompt, userPrompt)
+	if err != nil {
+		return extractionDimension{Name: "pronouns", Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	bindings, status, parseErr := parsePronounsPayload(raw, envelope.CurrentMessage.MessageID)
+	if parseErr != nil {
+		return extractionDimension{Name: "pronouns", Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return extractionDimension{Name: "pronouns", Status: status, Raw: raw, Model: model, Pronouns: bindings}
+}
+
+func (e *Engine) summarizeMessage(ctx context.Context, envelope promptEnvelope) extractionDimension {
+	systemPrompt := `You summarize a single message for short-term conversational memory.
+Return ONLY valid JSON with this exact schema:
+{
+  "summary": "one or two short sentences"
+}
+
+Rules:
+- Focus on what this message contributes to the active conversation.
+- Keep it compact and plain-language.
+- If the message contributes very little, still summarize it briefly.`
+
+	userPrompt := buildSharedPromptEnvelope(envelope)
+	raw, model, err := e.callLLM(ctx, "summarize_message", systemPrompt, userPrompt)
+	if err != nil {
+		return extractionDimension{Name: "summary", Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	summary, status, parseErr := parseSummaryPayload(raw)
+	if parseErr != nil {
+		return extractionDimension{Name: "summary", Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return extractionDimension{Name: "summary", Status: status, Raw: raw, Model: model, Summary: summary}
+}
+
+func (e *Engine) updateRollingSummary(ctx context.Context, envelope promptEnvelope, extraction models.MessageExtraction) summaryUpdateResult {
+	systemPrompt := `You update a rolling summary of the active conversation.
+Return ONLY valid JSON with this exact schema:
+{
+  "rolling_summary": "compact summary"
+}
+
+Rules:
+- Keep the summary readable, compact, and focused on the current direction.
+- Favor recent developments, decisions, unresolved questions, and active topics.
+- Do not restate the entire conversation.
+- Use the current raw message and recent evidence, not just the previous summary.`
+
+	userPrompt := buildRollingSummaryPrompt(envelope, extraction)
+	raw, model, err := e.callLLM(ctx, "update_rolling_summary", systemPrompt, userPrompt)
+	if err != nil {
+		return summaryUpdateResult{Status: "failed", Raw: raw, Model: model, Err: err}
+	}
+
+	summary, status, parseErr := parseRollingSummaryPayload(raw)
+	if parseErr != nil {
+		return summaryUpdateResult{Status: "failed", Raw: raw, Model: model, Err: parseErr}
+	}
+	return summaryUpdateResult{Status: status, Raw: raw, Model: model, Summary: summary}
+}
+
+func (e *Engine) callLLM(ctx context.Context, purpose, systemPrompt, userPrompt string) (string, string, error) {
+	messages := []ollama.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: userPrompt},
+	}
+	request := ollama.ChatRequest{
+		Model:    e.model,
+		Messages: messages,
+		Stream:   false,
+	}
+	requestBody, _ := json.Marshal(request)
+	e.emit(ctx, telemetryKindRequest, purpose+" request prepared", map[string]any{
+		"purpose":           purpose,
+		"model":             e.model,
+		"messages":          messages,
+		"system_prompt":     systemPrompt,
+		"user_prompt":       userPrompt,
+		"request_body_json": string(requestBody),
+	})
+
+	result, err := e.client.ChatDetailed(ctx, request)
+	if err != nil {
+		e.emit(ctx, telemetryKindResponse, purpose+" request failed", map[string]any{
+			"purpose":           purpose,
+			"model":             e.model,
+			"request_body_json": string(requestBody),
+			"raw_response":      result.RawResponse,
+			"error":             err.Error(),
+		})
+		return strings.TrimSpace(result.ResponseContent), e.model, err
+	}
+
+	e.emit(ctx, telemetryKindResponse, purpose+" response received", map[string]any{
+		"purpose":      purpose,
+		"model":        e.model,
+		"raw_response": result.RawResponse,
+	})
+	return strings.TrimSpace(result.ResponseContent), e.model, nil
+}
+
+func buildSharedPromptEnvelope(envelope promptEnvelope) string {
+	var builder strings.Builder
+	builder.WriteString("current_message:\n")
+	builder.WriteString(envelope.CurrentMessage.Content)
+	builder.WriteString("\n\nauthor_role:\n")
+	builder.WriteString(envelope.CurrentMessage.AuthorRole)
+
+	builder.WriteString("\n\nreply_target:\n")
+	if envelope.ReplyTarget == nil || strings.TrimSpace(envelope.ReplyTarget.Content) == "" {
+		builder.WriteString("none")
+	} else {
+		builder.WriteString(envelope.ReplyTarget.Content)
+	}
+
+	builder.WriteString("\n\nrecent_messages:\n")
+	builder.WriteString(formatRawMessages(envelope.RecentMessages))
+
+	builder.WriteString("\ncurrent_rolling_summary:\n")
+	if strings.TrimSpace(envelope.WorkingState.RollingSummary) == "" {
+		builder.WriteString("none")
+	} else {
+		builder.WriteString(envelope.WorkingState.RollingSummary)
+	}
+
+	builder.WriteString("\n\ncurrent_active_topics:\n")
+	if len(envelope.WorkingState.ActiveTopics) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, topic := range envelope.WorkingState.ActiveTopics {
+			builder.WriteString("- ")
+			builder.WriteString(topic.Name)
+			builder.WriteString(" (status=")
+			builder.WriteString(topic.Status)
+			builder.WriteString(" salience=")
+			builder.WriteString(fmt.Sprintf("%.2f", topic.Salience))
+			builder.WriteString(")\n")
+		}
+	}
+
+	builder.WriteString("\ncurrent_open_questions:\n")
+	openCount := 0
+	for _, question := range envelope.WorkingState.OpenQuestions {
+		if question.Status != "open" {
+			continue
+		}
+		openCount++
+		builder.WriteString("- ")
+		builder.WriteString(question.Text)
+		builder.WriteString(" (salience=")
+		builder.WriteString(fmt.Sprintf("%.2f", question.Salience))
+		builder.WriteString(")\n")
+	}
+	if openCount == 0 {
+		builder.WriteString("- none\n")
+	}
+	return builder.String()
+}
+
+func buildRollingSummaryPrompt(envelope promptEnvelope, extraction models.MessageExtraction) string {
+	var builder strings.Builder
+	builder.WriteString(buildSharedPromptEnvelope(envelope))
+
+	builder.WriteString("\n\nmessage_artifacts:\n")
+	builder.WriteString("message_summary:\n")
+	if strings.TrimSpace(extraction.MessageSummary) == "" {
+		builder.WriteString("none\n")
+	} else {
+		builder.WriteString(extraction.MessageSummary)
+		builder.WriteString("\n")
+	}
+
+	builder.WriteString("claims:\n")
+	if len(extraction.Claims) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, claim := range extraction.Claims {
+			builder.WriteString("- ")
+			builder.WriteString(claim.Subject)
+			builder.WriteString(" | ")
+			builder.WriteString(claim.Predicate)
+			builder.WriteString(" | ")
+			builder.WriteString(claim.Object)
+			builder.WriteString("\n")
+		}
+	}
+
+	builder.WriteString("open_questions:\n")
+	if len(extraction.OpenQuestions) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, question := range extraction.OpenQuestions {
+			builder.WriteString("- ")
+			builder.WriteString(question.Text)
+			builder.WriteString("\n")
+		}
+	}
+
+	builder.WriteString("topics:\n")
+	if len(extraction.ActiveTopics) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, topic := range extraction.ActiveTopics {
+			builder.WriteString("- ")
+			builder.WriteString(topic.Name)
+			builder.WriteString("\n")
+		}
+	}
+
+	builder.WriteString("pronoun_bindings:\n")
+	if len(extraction.PronounResolutions) == 0 {
+		builder.WriteString("- none\n")
+	} else {
+		for _, binding := range extraction.PronounResolutions {
+			builder.WriteString("- ")
+			builder.WriteString(binding.Expression)
+			builder.WriteString(" -> ")
+			builder.WriteString(binding.Referent)
+			builder.WriteString(" (")
+			builder.WriteString(fmt.Sprintf("%.2f", binding.Confidence))
+			builder.WriteString(")\n")
+		}
+	}
+	return builder.String()
+}
+
+func formatRawMessages(messages []models.RawMessage) string {
+	if len(messages) == 0 {
+		return "- none\n"
+	}
+
+	var builder strings.Builder
+	for _, message := range messages {
+		if strings.TrimSpace(message.Content) == "" {
+			continue
+		}
+		builder.WriteString("- ")
+		builder.WriteString(message.AuthorRole)
+		builder.WriteString(":")
+		builder.WriteString(message.AuthorID)
+		builder.WriteString(": ")
+		builder.WriteString(message.Content)
+		builder.WriteString("\n")
+	}
+	if builder.Len() == 0 {
+		return "- none\n"
+	}
+	return builder.String()
+}
+
+func parseClaimsPayload(raw, sourceMessageID string) ([]models.Claim, string, error) {
+	body, err := extractJSONObject(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	var payload claimsPayload
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, "", err
+	}
+
+	out := make([]models.Claim, 0, len(payload.Claims))
+	dropped := 0
+	for _, claim := range payload.Claims {
+		subject := strings.TrimSpace(claim.Subject)
+		predicate := strings.TrimSpace(claim.Predicate)
+		object := strings.TrimSpace(claim.Object)
+		if subject == "" || predicate == "" || object == "" {
+			dropped++
+			continue
+		}
+		out = append(out, models.Claim{
+			Subject:         subject,
+			Predicate:       predicate,
+			Object:          object,
+			SourceMessageID: sourceMessageID,
+		})
+	}
+	return out, payloadStatus(len(out), dropped), nil
+}
+
+func parseQuestionsPayload(raw, sourceMessageID string) ([]models.OpenQuestion, string, error) {
+	body, err := extractJSONObject(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	var payload questionsPayload
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, "", err
+	}
+
+	out := make([]models.OpenQuestion, 0, len(payload.Questions))
+	dropped := 0
+	for _, question := range payload.Questions {
+		text := normalizeQuestion(question.Text)
+		if text == "" {
+			dropped++
+			continue
+		}
+		out = append(out, models.OpenQuestion{
+			Text:            text,
+			SourceMessageID: sourceMessageID,
+		})
+	}
+	return out, payloadStatus(len(out), dropped), nil
+}
+
+func parseTopicsPayload(raw string) ([]models.TopicRef, string, error) {
+	body, err := extractJSONObject(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	var payload topicsPayload
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, "", err
+	}
+
+	seen := make(map[string]struct{}, len(payload.Topics))
+	out := make([]models.TopicRef, 0, len(payload.Topics))
+	dropped := 0
+	for _, topic := range payload.Topics {
+		for _, part := range splitTopicCandidate(topic) {
+			name := normalizeTopicName(part)
+			if name == "" {
+				dropped++
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			out = append(out, models.TopicRef{Name: name})
+		}
+	}
+	return out, payloadStatus(len(out), dropped), nil
+}
+
+func parsePronounsPayload(raw, sourceMessageID string) ([]models.PronounResolution, string, error) {
+	body, err := extractJSONObject(raw)
+	if err != nil {
+		return nil, "", err
+	}
+	var payload pronounsPayload
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, "", err
+	}
+
+	out := make([]models.PronounResolution, 0, len(payload.Bindings))
+	dropped := 0
+	for _, binding := range payload.Bindings {
+		expression := normalizeExpression(binding.Expression)
+		referent := strings.TrimSpace(binding.Referent)
+		confidence := clamp(binding.Confidence, 0, 1)
+		if expression == "" || referent == "" {
+			dropped++
+			continue
+		}
+		out = append(out, models.PronounResolution{
+			Expression:      expression,
+			Referent:        referent,
+			Confidence:      confidence,
+			SourceMessageID: sourceMessageID,
+		})
+	}
+	return out, payloadStatus(len(out), dropped), nil
+}
+
+func parseSummaryPayload(raw string) (string, string, error) {
+	body, err := extractJSONObject(raw)
+	if err == nil {
+		var payload summaryPayload
+		if jsonErr := json.Unmarshal([]byte(body), &payload); jsonErr == nil {
+			summary := strings.TrimSpace(payload.Summary)
+			if summary != "" {
+				return summary, "ok", nil
+			}
+		}
+	}
+
+	fallback := trimmedPlainText(raw)
+	if fallback == "" {
+		if err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("summary payload empty")
+	}
+	return fallback, "partial", nil
+}
+
+func parseRollingSummaryPayload(raw string) (string, string, error) {
+	body, err := extractJSONObject(raw)
+	if err == nil {
+		var payload rollingSummaryPayload
+		if jsonErr := json.Unmarshal([]byte(body), &payload); jsonErr == nil {
+			summary := strings.TrimSpace(payload.RollingSummary)
+			if summary != "" {
+				return summary, "ok", nil
+			}
+		}
+	}
+
+	fallback := trimmedPlainText(raw)
+	if fallback == "" {
+		if err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("rolling summary payload empty")
+	}
+	return fallback, "partial", nil
+}
+
+func extractJSONObject(raw string) (string, error) {
+	body := strings.TrimSpace(raw)
+	if body == "" {
+		return "", fmt.Errorf("empty extraction response")
+	}
+
+	start := strings.Index(body, "{")
+	end := strings.LastIndex(body, "}")
+	if start < 0 || end < 0 || end <= start {
+		return "", fmt.Errorf("no json object found in response")
+	}
+	return body[start : end+1], nil
+}
+
+func payloadStatus(validCount, dropped int) string {
+	switch {
+	case validCount == 0 && dropped > 0:
+		return "failed"
+	case dropped > 0:
+		return "partial"
+	default:
+		return "ok"
+	}
+}
+
+func trimmedPlainText(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+	return raw
+}
+
+func splitTopicCandidate(topic string) []string {
+	parts := []string{topic}
+	separators := []string{"|", ",", ";", " / "}
+	for _, separator := range separators {
+		next := make([]string, 0, len(parts))
+		for _, part := range parts {
+			split := strings.Split(part, separator)
+			if len(split) == 0 {
+				continue
+			}
+			next = append(next, split...)
+		}
+		parts = next
+	}
+	return parts
+}

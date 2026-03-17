@@ -38,6 +38,7 @@ func run() error {
 
 	mux := http.NewServeMux()
 	webapp.Graph(mux, runtime.Store())
+	webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 
 	listener, err := net.Listen("tcp", cfg.GraphWebAddr)
 	if err != nil {

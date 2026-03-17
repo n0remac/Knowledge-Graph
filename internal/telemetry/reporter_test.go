@@ -137,3 +137,50 @@ func TestReporterResolvesChannelName(t *testing.T) {
 		t.Fatalf("channelID = %q", sender.channelID)
 	}
 }
+
+func TestReporterBuildsGroupedConversationMessage(t *testing.T) {
+	sender := &fakeDiscordSender{}
+	reporter := newDiscordReporter(Config{
+		EnableDiscordReporting: true,
+		DiscordDebugChannelID:  "123456789012345678",
+		MaxAttachmentBytes:     1024,
+	}, sender, nil)
+
+	reporter.processWrittenEvent(WrittenEvent{
+		Event: Event{
+			TraceID:  "trace-4",
+			Sequence: 3,
+			Stage:    StageConversation,
+			Kind:     "parallel_extraction_completed",
+			Summary:  "parallel extraction batch completed",
+			Payload: map[string]any{
+				"counts": map[string]any{
+					"claims":    1,
+					"questions": 0,
+				},
+			},
+		},
+		Summary: TraceSummary{
+			TraceID: "trace-4",
+			Status:  "in_progress",
+			ExtractorStatuses: map[string]string{
+				"claims":    "ok",
+				"questions": "ok",
+				"topics":    "ok",
+				"pronouns":  "failed",
+				"summary":   "ok",
+			},
+		},
+		TraceIndex: TraceIndex{
+			TraceID: "trace-4",
+			Status:  "in_progress",
+		},
+	})
+
+	if sender.calls != 1 {
+		t.Fatalf("calls = %d, want 1", sender.calls)
+	}
+	if sender.message == nil || sender.message.Content == "" {
+		t.Fatalf("expected grouped conversation report content, got %#v", sender.message)
+	}
+}

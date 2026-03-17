@@ -16,6 +16,9 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 	if cfg.GraphWebAddr != "127.0.0.1:8080" {
 		t.Fatalf("GraphWebAddr = %q", cfg.GraphWebAddr)
 	}
+	if cfg.ConversationStorePath != "data/conversation-state.json" {
+		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
+	}
 	if cfg.Telemetry.BaseDir != "data/telemetry" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)
 	}
@@ -38,6 +41,7 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	t.Setenv("TELEMETRY_WRITE_RETRIEVAL_EVENTS", "false")
 	t.Setenv("TELEMETRY_WRITE_RUNTIME_EVENTS", "false")
 	t.Setenv("GRAPH_WEB_ADDR", "0.0.0.0:9000")
+	t.Setenv("CONVERSATION_STORE_PATH", "./tmp/conversations.json")
 
 	cfg, err := Load()
 	if err != nil {
@@ -49,6 +53,9 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	}
 	if cfg.GraphWebAddr != "0.0.0.0:9000" {
 		t.Fatalf("GraphWebAddr = %q", cfg.GraphWebAddr)
+	}
+	if cfg.ConversationStorePath != "tmp/conversations.json" {
+		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
 	}
 	if cfg.Telemetry.BaseDir != "tmp/traces" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)

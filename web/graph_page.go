@@ -48,8 +48,13 @@ func GraphToolbar() *Node {
 				),
 				P(
 					Class("text-sm text-slate-600"),
-					T("Complete graph viewer with Cytoscape.js"),
+					T("Legacy graph viewer for historical topic/fact data"),
 				),
+			),
+			A(
+				Href("/conversation"),
+				Class("btn btn-sm border-slate-300 bg-white text-slate-900 hover:border-cyan-500 hover:bg-cyan-50"),
+				T("Open Conversation State"),
 			),
 			Button(
 				Id("graph-reload-btn"),
