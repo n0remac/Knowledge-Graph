@@ -41,15 +41,13 @@ func TestConversationDataHandler(t *testing.T) {
 		t.Fatalf("SaveRawMessage() error = %v", err)
 	}
 	if _, err := cs.SaveMessageExtraction(ctx, models.MessageExtraction{
-		MessageID:       message.MessageID,
-		ConversationID:  message.ConversationID,
-		ActiveTopics:    []models.TopicRef{{Name: "rolling summary"}},
-		MessageSummary:  "The user asks about the rolling summary.",
-		ClaimsStatus:    "ok",
-		QuestionsStatus: "ok",
-		TopicsStatus:    "ok",
-		PronounsStatus:  "ok",
-		SummaryStatus:   "ok",
+		MessageID:      message.MessageID,
+		ConversationID: message.ConversationID,
+		ActiveTopics:   []models.TopicRef{{Name: "rolling summary"}},
+		MessageSummary: "The user asks about the rolling summary.",
+		ClaimsStatus:   "ok",
+		TopicsStatus:   "ok",
+		SummaryStatus:  "ok",
 	}); err != nil {
 		t.Fatalf("SaveMessageExtraction() error = %v", err)
 	}

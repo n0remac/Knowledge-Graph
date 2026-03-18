@@ -1,6 +1,6 @@
 # Knowledge-Graph
 
-Discord bot with a live conversation-state memory layer and a legacy graph viewer.
+Discord bot with a live conversation-state memory layer.
 
 ## Current behavior
 
@@ -24,10 +24,8 @@ For each non-bot message the bot can read:
 - `OLLAMA_CHAT_MODEL` (default: `qwen2.5:1.5b-instruct`)
 - `OLLAMA_EXTRACT_MODEL` (default: value of `OLLAMA_CHAT_MODEL`)
 - `BOT_PERSONA` (default: `You are a helpful Discord assistant.`)
-- `GRAPH_STORE_PATH` (default: `data/graph-store.json`)
 - `CONVERSATION_STORE_PATH` (default: `data/conversation-state.json`)
-- `GRAPH_WEB_ADDR` (default: `127.0.0.1:8080`)
-- `SQLITE_PATH` (legacy fallback env var)
+- `WEB_ADDR` (default: `127.0.0.1:8080`)
 - `REQUEST_TIMEOUT_SECONDS` (default: `45`)
 
 ### Discord app settings
@@ -49,8 +47,6 @@ go run .
 
 The live conversation-state viewer is available at `http://127.0.0.1:8080/conversation` by default.
 
-The legacy graph viewer remains available at `http://127.0.0.1:8080/graph`.
-
 ## Data model (current stage)
 
 Live conversation-state entities:
@@ -58,5 +54,3 @@ Live conversation-state entities:
 - per-message extraction artifacts
 - rolling working state
 - response context artifacts
-
-The historical graph store is still loaded for `/graph`, but the live runtime no longer writes new topic/fact graph updates in this stage.

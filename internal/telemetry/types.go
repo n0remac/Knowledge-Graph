@@ -8,10 +8,7 @@ import (
 
 const (
 	StageRuntime      = "runtime"
-	StageRetrieval    = "retrieval"
-	StageExtraction   = "extraction"
 	StageConversation = "conversation"
-	StageResolution   = "resolution"
 	StageStore        = "store"
 	StageGeneration   = "generation"
 	StageDiscordDebug = "discord_debug"
@@ -31,7 +28,6 @@ type Config struct {
 	WriteRawPromptFiles    bool
 	WriteRawResponseFiles  bool
 	WriteStoreEvents       bool
-	WriteRetrievalEvents   bool
 	WriteRuntimeEvents     bool
 }
 
@@ -45,7 +41,6 @@ func DefaultConfig() Config {
 		WriteRawPromptFiles:    true,
 		WriteRawResponseFiles:  true,
 		WriteStoreEvents:       true,
-		WriteRetrievalEvents:   true,
 		WriteRuntimeEvents:     true,
 	}
 }
@@ -95,18 +90,11 @@ type TraceSummary struct {
 	TraceID             string            `json:"trace_id"`
 	Status              string            `json:"status"`
 	SourceMessage       map[string]any    `json:"source_message,omitempty"`
-	ExtractionContext   map[string]any    `json:"extraction_context,omitempty"`
-	GenerationContext   map[string]any    `json:"generation_context,omitempty"`
 	ExtractorStatuses   map[string]string `json:"extractor_statuses,omitempty"`
 	MessageExtraction   map[string]any    `json:"message_extraction,omitempty"`
 	WorkingState        map[string]any    `json:"working_state,omitempty"`
 	ResponseContext     map[string]any    `json:"response_context,omitempty"`
 	SummaryUpdateStatus string            `json:"summary_update_status,omitempty"`
-	TopicCandidates     []string          `json:"topic_candidates,omitempty"`
-	ResolvedTopics      []map[string]any  `json:"resolved_topics,omitempty"`
-	FactCandidates      []map[string]any  `json:"fact_candidates,omitempty"`
-	PersistedFacts      []map[string]any  `json:"persisted_facts,omitempty"`
-	Edges               []map[string]any  `json:"edges,omitempty"`
 	Reply               map[string]any    `json:"reply,omitempty"`
 	Errors              []map[string]any  `json:"errors,omitempty"`
 	UpdatedAt           time.Time         `json:"updated_at"`

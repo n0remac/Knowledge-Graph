@@ -53,7 +53,7 @@ func TestReporterBuildsMessageAndAttachments(t *testing.T) {
 		Event: Event{
 			TraceID:  "trace-1",
 			Sequence: 1,
-			Stage:    StageExtraction,
+			Stage:    StageConversation,
 			Kind:     "ollama_request",
 			Summary:  "request",
 		},
@@ -155,8 +155,8 @@ func TestReporterBuildsGroupedConversationMessage(t *testing.T) {
 			Summary:  "parallel extraction batch completed",
 			Payload: map[string]any{
 				"counts": map[string]any{
-					"claims":    1,
-					"questions": 0,
+					"claims": 1,
+					"topics": 2,
 				},
 			},
 		},
@@ -164,11 +164,9 @@ func TestReporterBuildsGroupedConversationMessage(t *testing.T) {
 			TraceID: "trace-4",
 			Status:  "in_progress",
 			ExtractorStatuses: map[string]string{
-				"claims":    "ok",
-				"questions": "ok",
-				"topics":    "ok",
-				"pronouns":  "failed",
-				"summary":   "ok",
+				"claims":  "ok",
+				"topics":  "ok",
+				"summary": "ok",
 			},
 		},
 		TraceIndex: TraceIndex{

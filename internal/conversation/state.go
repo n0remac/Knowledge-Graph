@@ -1,7 +1,6 @@
 package conversation
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -10,33 +9,24 @@ import (
 )
 
 const (
-	maxPromptRecentMessages    = 5
-	maxRecentStateEntries      = 10
-	maxResponseRecentMessages  = 4
-	maxActiveTopics            = 6
-	maxOpenQuestions           = 5
-	maxActiveClaims            = 8
-	maxPronounBindings         = 8
-	newTopicSalience           = 0.75
-	topicSeenBump              = 0.20
-	topicDecay                 = 0.10
-	topicActiveThreshold       = 0.45
-	topicPruneThreshold        = 0.20
-	newQuestionSalience        = 1.00
-	questionSeenBump           = 0.15
-	questionDecay              = 0.08
-	questionPruneThreshold     = 0.20
-	newClaimSalience           = 0.70
-	claimSeenBump              = 0.15
-	claimDecay                 = 0.07
-	claimPruneThreshold        = 0.25
-	minPronounConfidence       = 0.60
-	minPronounKeepConfidence   = 0.50
-	pronounConfidenceDecay     = 0.05
-	pronounExpiryMessageWindow = 3
+	maxPromptRecentMessages   = 5
+	maxRecentStateEntries     = 10
+	maxResponseRecentMessages = 4
+	maxActiveTopics           = 6
+	maxActiveClaims           = 8
+	maxBriefClaims            = 6
+	newTopicSalience          = 0.75
+	topicSeenBump             = 0.20
+	topicDecay                = 0.10
+	topicActiveThreshold      = 0.45
+	topicPruneThreshold       = 0.20
+	newClaimSalience          = 0.70
+	claimSeenBump             = 0.15
+	claimDecay                = 0.07
+	claimPruneThreshold       = 0.25
 )
 
-func mergeWorkingState(previous models.WorkingState, current models.RawMessage, extraction models.MessageExtraction, rollingSummary string, sequenceForMessage func(string) int64) models.WorkingState {
+func mergeWorkingState(previous models.WorkingState, current models.RawMessage, extraction models.MessageExtraction, rollingSummary string, _ func(string) int64) models.WorkingState {
 	state := previous
 	state.ConversationID = current.ConversationID
 	state.LastUpdatedMessageID = current.MessageID
@@ -46,9 +36,7 @@ func mergeWorkingState(previous models.WorkingState, current models.RawMessage, 
 	}
 
 	state.ActiveTopics = mergeTopics(previous.ActiveTopics, extraction.ActiveTopics, current.MessageID)
-	state.OpenQuestions = mergeOpenQuestions(previous.OpenQuestions, extraction.OpenQuestions, extraction.Claims, current, sequenceForMessage)
 	state.ActiveClaims = mergeClaims(previous.ActiveClaims, extraction.Claims, current.MessageID)
-	state.PronounResolutionMap = mergePronouns(previous.PronounResolutionMap, extraction.PronounResolutions, current.MessageID, current.SequenceNumber, sequenceForMessage)
 	state.RecentMessageIDs = appendBoundedUnique(previous.RecentMessageIDs, current.MessageID, maxRecentStateEntries)
 	state.RecentExtractionIDs = appendBoundedUnique(previous.RecentExtractionIDs, extraction.MessageID, maxRecentStateEntries)
 	return state
@@ -116,79 +104,6 @@ func mergeTopics(previous []models.TopicState, current []models.TopicRef, messag
 	return out
 }
 
-func mergeOpenQuestions(previous []models.OpenQuestionState, current []models.OpenQuestion, currentClaims []models.Claim, message models.RawMessage, sequenceForMessage func(string) int64) []models.OpenQuestionState {
-	currentSeen := make(map[string]models.OpenQuestion, len(current))
-	for _, question := range current {
-		text := normalizeQuestion(question.Text)
-		if text == "" {
-			continue
-		}
-		question.Text = text
-		currentSeen[text] = question
-	}
-
-	isQuestionMessage := isLikelyQuestion(message.Content)
-	merged := make(map[string]models.OpenQuestionState, len(previous)+len(currentSeen))
-	for _, question := range previous {
-		text := normalizeQuestion(question.Text)
-		if text == "" {
-			continue
-		}
-		question.Text = text
-		if currentQuestion, seen := currentSeen[text]; seen {
-			question.Status = "open"
-			question.Salience = clamp(question.Salience+questionSeenBump, 0, 1)
-			question.LastSeenIn = currentQuestion.SourceMessageID
-			merged[text] = question
-			continue
-		}
-
-		question.Salience = clamp(question.Salience-questionDecay, 0, 1)
-		if question.Status == "open" && !isQuestionMessage && sharesMeaningfulWords(question.Text, message.Content, currentClaims) {
-			question.Status = "resolved"
-			question.LastSeenIn = message.MessageID
-		}
-
-		if shouldPruneQuestion(question, message.SequenceNumber, sequenceForMessage) {
-			continue
-		}
-		merged[text] = question
-	}
-
-	for text, question := range currentSeen {
-		if _, ok := merged[text]; ok {
-			continue
-		}
-		merged[text] = models.OpenQuestionState{
-			Text:       question.Text,
-			Status:     "open",
-			Salience:   newQuestionSalience,
-			LastSeenIn: question.SourceMessageID,
-		}
-	}
-
-	out := make([]models.OpenQuestionState, 0, len(merged))
-	for _, question := range merged {
-		if question.Salience < questionPruneThreshold {
-			continue
-		}
-		out = append(out, question)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Status == out[j].Status {
-			if out[i].Salience == out[j].Salience {
-				return out[i].Text < out[j].Text
-			}
-			return out[i].Salience > out[j].Salience
-		}
-		return out[i].Status < out[j].Status
-	})
-	if len(out) > maxOpenQuestions {
-		out = out[:maxOpenQuestions]
-	}
-	return out
-}
-
 func mergeClaims(previous []models.ClaimState, current []models.Claim, messageID string) []models.ClaimState {
 	currentSeen := make(map[string]models.Claim, len(current))
 	for _, claim := range current {
@@ -252,75 +167,6 @@ func mergeClaims(previous []models.ClaimState, current []models.Claim, messageID
 	return out
 }
 
-func mergePronouns(previous []models.PronounBinding, current []models.PronounResolution, messageID string, sequenceNumber int64, sequenceForMessage func(string) int64) []models.PronounBinding {
-	currentSeen := make(map[string]models.PronounResolution, len(current))
-	for _, binding := range current {
-		expression := normalizeExpression(binding.Expression)
-		if expression == "" || strings.TrimSpace(binding.Referent) == "" || binding.Confidence < minPronounConfidence {
-			continue
-		}
-		binding.Expression = expression
-		currentSeen[expression] = binding
-	}
-
-	merged := make(map[string]models.PronounBinding, len(previous)+len(currentSeen))
-	for _, binding := range previous {
-		expression := normalizeExpression(binding.Expression)
-		if expression == "" {
-			continue
-		}
-		binding.Expression = expression
-		if currentBinding, seen := currentSeen[expression]; seen {
-			if currentBinding.Confidence >= binding.Confidence || !strings.EqualFold(strings.TrimSpace(currentBinding.Referent), strings.TrimSpace(binding.Referent)) {
-				binding.Referent = strings.TrimSpace(currentBinding.Referent)
-				binding.Confidence = clamp(currentBinding.Confidence, 0, 1)
-			}
-			binding.LastSeenIn = messageID
-			merged[expression] = binding
-			continue
-		}
-
-		binding.Confidence = clamp(binding.Confidence-pronounConfidenceDecay, 0, 1)
-		if sequenceNumber-sequenceForMessage(binding.LastSeenIn) >= pronounExpiryMessageWindow || binding.Confidence < minPronounKeepConfidence {
-			continue
-		}
-		merged[expression] = binding
-	}
-
-	for expression, binding := range currentSeen {
-		if existing, ok := merged[expression]; ok {
-			if binding.Confidence >= existing.Confidence || !strings.EqualFold(strings.TrimSpace(binding.Referent), strings.TrimSpace(existing.Referent)) {
-				existing.Referent = strings.TrimSpace(binding.Referent)
-				existing.Confidence = clamp(binding.Confidence, 0, 1)
-			}
-			existing.LastSeenIn = messageID
-			merged[expression] = existing
-			continue
-		}
-		merged[expression] = models.PronounBinding{
-			Expression: expression,
-			Referent:   strings.TrimSpace(binding.Referent),
-			Confidence: clamp(binding.Confidence, 0, 1),
-			LastSeenIn: messageID,
-		}
-	}
-
-	out := make([]models.PronounBinding, 0, len(merged))
-	for _, binding := range merged {
-		out = append(out, binding)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Confidence == out[j].Confidence {
-			return out[i].Expression < out[j].Expression
-		}
-		return out[i].Confidence > out[j].Confidence
-	})
-	if len(out) > maxPronounBindings {
-		out = out[:maxPronounBindings]
-	}
-	return out
-}
-
 func buildResponseContextArtifact(message models.RawMessage, state models.WorkingState, recentMessages []models.RawMessage) models.ResponseContextArtifact {
 	var builder strings.Builder
 
@@ -343,30 +189,18 @@ func buildResponseContextArtifact(message models.RawMessage, state models.Workin
 		}
 	}
 
-	builder.WriteString("\nOpen Questions\n")
-	openCount := 0
-	for _, question := range state.OpenQuestions {
-		if question.Status != "open" {
-			continue
-		}
-		openCount++
-		builder.WriteString("- ")
-		builder.WriteString(question.Text)
-		builder.WriteString("\n")
-	}
-	if openCount == 0 {
-		builder.WriteString("- none\n")
-	}
-
-	builder.WriteString("\nCurrent References\n")
-	if len(state.PronounResolutionMap) == 0 {
+	builder.WriteString("\nRelated Claims\n")
+	relevantClaims := topicRelatedClaims(state.ActiveTopics, state.ActiveClaims)
+	if len(relevantClaims) == 0 {
 		builder.WriteString("- none\n")
 	} else {
-		for _, binding := range state.PronounResolutionMap {
+		for _, claim := range relevantClaims {
 			builder.WriteString("- ")
-			builder.WriteString(binding.Expression)
-			builder.WriteString(" -> ")
-			builder.WriteString(binding.Referent)
+			builder.WriteString(claim.Subject)
+			builder.WriteString(" | ")
+			builder.WriteString(claim.Predicate)
+			builder.WriteString(" | ")
+			builder.WriteString(claim.Object)
 			builder.WriteString("\n")
 		}
 	}
@@ -394,37 +228,6 @@ func buildResponseContextArtifact(message models.RawMessage, state models.Workin
 	}
 }
 
-func shouldPruneQuestion(question models.OpenQuestionState, currentSequence int64, sequenceForMessage func(string) int64) bool {
-	if question.Salience < questionPruneThreshold {
-		return true
-	}
-	if question.Status != "resolved" {
-		return false
-	}
-	return currentSequence-sequenceForMessage(question.LastSeenIn) >= 2
-}
-
-func sharesMeaningfulWords(questionText, messageContent string, claims []models.Claim) bool {
-	questionWords := contentWords(questionText)
-	if len(questionWords) == 0 {
-		return false
-	}
-	messageWords := contentWords(messageContent)
-	for _, claim := range claims {
-		for word := range contentWords(claim.Subject + " " + claim.Predicate + " " + claim.Object) {
-			messageWords[word] = struct{}{}
-		}
-	}
-
-	shared := 0
-	for word := range questionWords {
-		if _, ok := messageWords[word]; ok {
-			shared++
-		}
-	}
-	return shared >= 2
-}
-
 func contentWords(input string) map[string]struct{} {
 	fields := strings.FieldsFunc(strings.ToLower(input), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
@@ -440,6 +243,58 @@ func contentWords(input string) map[string]struct{} {
 		out[field] = struct{}{}
 	}
 	return out
+}
+
+func topicRelatedClaims(topics []models.TopicState, claims []models.ClaimState) []models.ClaimState {
+	if len(topics) == 0 || len(claims) == 0 {
+		return nil
+	}
+
+	topicNames := make([]string, 0, len(topics))
+	topicWords := make(map[string]struct{})
+	for _, topic := range topics {
+		name := normalizeTopicName(topic.Name)
+		if name == "" {
+			continue
+		}
+		topicNames = append(topicNames, name)
+		for word := range contentWords(name) {
+			topicWords[word] = struct{}{}
+		}
+	}
+	if len(topicNames) == 0 {
+		return nil
+	}
+
+	out := make([]models.ClaimState, 0, min(len(claims), maxBriefClaims))
+	for _, claim := range claims {
+		if !claimRelatesToTopics(claim, topicNames, topicWords) {
+			continue
+		}
+		out = append(out, claim)
+		if len(out) >= maxBriefClaims {
+			break
+		}
+	}
+	return out
+}
+
+func claimRelatesToTopics(claim models.ClaimState, topicNames []string, topicWords map[string]struct{}) bool {
+	claimText := canonicalText(claim.Subject + " " + claim.Predicate + " " + claim.Object)
+	if claimText == "" {
+		return false
+	}
+	for _, topicName := range topicNames {
+		if topicName != "" && strings.Contains(claimText, topicName) {
+			return true
+		}
+	}
+	for word := range contentWords(claimText) {
+		if _, ok := topicWords[word]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func appendBoundedUnique(existing []string, value string, limit int) []string {
@@ -497,21 +352,6 @@ func normalizeTopicName(input string) string {
 	return input
 }
 
-func normalizeQuestion(input string) string {
-	input = strings.TrimSpace(input)
-	input = strings.Join(strings.Fields(input), " ")
-	if input == "" {
-		return ""
-	}
-	return input
-}
-
-func normalizeExpression(input string) string {
-	input = strings.ToLower(strings.TrimSpace(input))
-	input = strings.Join(strings.Fields(input), " ")
-	return input
-}
-
 func topicStatus(salience float64) string {
 	if salience < topicActiveThreshold {
 		return "fading"
@@ -543,24 +383,6 @@ func clamp(value, minValue, maxValue float64) float64 {
 	return value
 }
 
-func isLikelyQuestion(input string) bool {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return false
-	}
-	if strings.Contains(input, "?") {
-		return true
-	}
-	lower := strings.ToLower(input)
-	prefixes := []string{"what ", "why ", "how ", "when ", "where ", "who ", "can ", "should ", "do ", "does ", "did ", "is ", "are ", "will "}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(lower, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
 var stopWords = map[string]struct{}{
 	"about": {}, "after": {}, "again": {}, "also": {}, "been": {}, "could": {}, "from": {}, "have": {}, "into": {}, "just": {},
 	"like": {}, "that": {}, "them": {}, "they": {}, "this": {}, "what": {}, "when": {}, "where": {}, "which": {}, "will": {},
@@ -585,9 +407,7 @@ func workingStatePayload(state models.WorkingState) map[string]any {
 		"state_version":             state.StateVersion,
 		"rolling_summary":           state.RollingSummary,
 		"active_topics":             state.ActiveTopics,
-		"open_questions":            state.OpenQuestions,
 		"active_claims":             state.ActiveClaims,
-		"pronoun_resolution_map":    state.PronounResolutionMap,
 		"recent_message_ids":        state.RecentMessageIDs,
 		"recent_extraction_ids":     state.RecentExtractionIDs,
 		"last_compacted_at_message": state.LastCompactedAtMessage,
@@ -596,23 +416,17 @@ func workingStatePayload(state models.WorkingState) map[string]any {
 
 func messageExtractionPayload(extraction models.MessageExtraction) map[string]any {
 	return map[string]any{
-		"message_id":              extraction.MessageID,
-		"conversation_id":         extraction.ConversationID,
-		"claims":                  extraction.Claims,
-		"open_questions":          extraction.OpenQuestions,
-		"active_topics":           extraction.ActiveTopics,
-		"pronoun_resolutions":     extraction.PronounResolutions,
-		"message_summary":         extraction.MessageSummary,
-		"claims_status":           extraction.ClaimsStatus,
-		"questions_status":        extraction.QuestionsStatus,
-		"topics_status":           extraction.TopicsStatus,
-		"pronouns_status":         extraction.PronounsStatus,
-		"summary_status":          extraction.SummaryStatus,
-		"claims_model_version":    extraction.ClaimsModelVersion,
-		"questions_model_version": extraction.QuestionsModelVersion,
-		"topics_model_version":    extraction.TopicsModelVersion,
-		"pronouns_model_version":  extraction.PronounsModelVersion,
-		"summary_model_version":   extraction.SummaryModelVersion,
+		"message_id":            extraction.MessageID,
+		"conversation_id":       extraction.ConversationID,
+		"claims":                extraction.Claims,
+		"active_topics":         extraction.ActiveTopics,
+		"message_summary":       extraction.MessageSummary,
+		"claims_status":         extraction.ClaimsStatus,
+		"topics_status":         extraction.TopicsStatus,
+		"summary_status":        extraction.SummaryStatus,
+		"claims_model_version":  extraction.ClaimsModelVersion,
+		"topics_model_version":  extraction.TopicsModelVersion,
+		"summary_model_version": extraction.SummaryModelVersion,
 	}
 }
 
@@ -631,20 +445,16 @@ func messagePayload(message models.RawMessage) map[string]any {
 
 func extractorStatusesPayload(extraction models.MessageExtraction) map[string]any {
 	return map[string]any{
-		"claims":    extraction.ClaimsStatus,
-		"questions": extraction.QuestionsStatus,
-		"topics":    extraction.TopicsStatus,
-		"pronouns":  extraction.PronounsStatus,
-		"summary":   extraction.SummaryStatus,
+		"claims":  extraction.ClaimsStatus,
+		"topics":  extraction.TopicsStatus,
+		"summary": extraction.SummaryStatus,
 	}
 }
 
 func statusCounts(extraction models.MessageExtraction) map[string]int {
 	return map[string]int{
 		"claims":     len(extraction.Claims),
-		"questions":  len(extraction.OpenQuestions),
 		"topics":     len(extraction.ActiveTopics),
-		"pronouns":   len(extraction.PronounResolutions),
 		"summary_ok": boolToInt(strings.TrimSpace(extraction.MessageSummary) != ""),
 	}
 }
@@ -668,21 +478,9 @@ func summaryPreview(input string, maxRunes int) string {
 }
 
 func formatWorkingStateCounts(state models.WorkingState) map[string]int {
-	openQuestions := 0
-	for _, question := range state.OpenQuestions {
-		if question.Status == "open" {
-			openQuestions++
-		}
-	}
 	return map[string]int{
-		"active_topics":    len(state.ActiveTopics),
-		"open_questions":   openQuestions,
-		"active_claims":    len(state.ActiveClaims),
-		"pronoun_bindings": len(state.PronounResolutionMap),
-		"recent_messages":  len(state.RecentMessageIDs),
+		"active_topics":   len(state.ActiveTopics),
+		"active_claims":   len(state.ActiveClaims),
+		"recent_messages": len(state.RecentMessageIDs),
 	}
-}
-
-func conversationTitle(snapshot models.WorkingState) string {
-	return fmt.Sprintf("conversation %s", snapshot.ConversationID)
 }

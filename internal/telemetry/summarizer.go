@@ -31,27 +31,9 @@ func applyEventToSummary(summary *TraceSummary, event Event) {
 
 	switch event.Kind {
 	case "message_received", "assistant_message_ingested":
-	case "retrieve_for_extraction":
-		summary.ExtractionContext = cloneMap(event.Payload)
-	case "retrieve_for_generation":
-		summary.GenerationContext = cloneMap(event.Payload)
 	case "parallel_extraction_completed", "message_extraction_persisted":
 		summary.ExtractorStatuses = payloadStringMap(event.Payload, "extractor_statuses")
 		summary.MessageExtraction = cloneMap(payloadMap(event.Payload, "message_extraction"))
-	case "extract_topics_result":
-		summary.TopicCandidates = payloadStrings(event.Payload, "topics")
-	case "topics_resolved":
-		summary.ResolvedTopics = payloadMaps(event.Payload, "topics")
-		if len(summary.ResolvedTopics) == 0 {
-			summary.ResolvedTopics = payloadMaps(event.Payload, "resolved_topics")
-		}
-	case "extract_facts_result":
-		summary.FactCandidates = payloadMaps(event.Payload, "facts")
-	case "facts_resolved":
-		summary.PersistedFacts = payloadMaps(event.Payload, "facts")
-		if edges := payloadMaps(event.Payload, "edges"); len(edges) > 0 {
-			summary.Edges = edges
-		}
 	case "working_state_updated":
 		summary.WorkingState = cloneMap(payloadMap(event.Payload, "working_state"))
 		summary.SummaryUpdateStatus = payloadString(event.Payload, "summary_update_status")
@@ -151,69 +133,6 @@ func payloadMap(payload map[string]any, key string) map[string]any {
 		return typed
 	default:
 		return map[string]any{"value": typed}
-	}
-}
-
-func payloadMaps(payload map[string]any, key string) []map[string]any {
-	if payload == nil {
-		return nil
-	}
-	value, ok := payload[key]
-	if !ok {
-		return nil
-	}
-
-	switch typed := value.(type) {
-	case []map[string]any:
-		out := make([]map[string]any, 0, len(typed))
-		for _, item := range typed {
-			out = append(out, cloneMap(item))
-		}
-		return out
-	case []any:
-		out := make([]map[string]any, 0, len(typed))
-		for _, item := range typed {
-			switch mapped := item.(type) {
-			case map[string]any:
-				out = append(out, cloneMap(mapped))
-			default:
-				out = append(out, map[string]any{"value": mapped})
-			}
-		}
-		return out
-	default:
-		return nil
-	}
-}
-
-func payloadStrings(payload map[string]any, key string) []string {
-	if payload == nil {
-		return nil
-	}
-	value, ok := payload[key]
-	if !ok {
-		return nil
-	}
-
-	switch typed := value.(type) {
-	case []string:
-		return append([]string(nil), typed...)
-	case []any:
-		out := make([]string, 0, len(typed))
-		for _, item := range typed {
-			text := strings.TrimSpace(fmt.Sprint(item))
-			if text == "" {
-				continue
-			}
-			out = append(out, text)
-		}
-		return out
-	default:
-		text := strings.TrimSpace(fmt.Sprint(typed))
-		if text == "" {
-			return nil
-		}
-		return []string{text}
 	}
 }
 

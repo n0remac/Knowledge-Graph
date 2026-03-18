@@ -195,25 +195,18 @@ func (r *DiscordReporter) reportContent(written WrittenEvent) (string, bool) {
 			written.TraceIndex.Status,
 			source["content"],
 		), true
-	case "retrieve_for_extraction", "retrieve_for_generation":
-		counts := payloadMap(event.Payload, "counts")
-		return fmt.Sprintf("trace `%s`\n%s\ncounts: %v", event.TraceID, event.Summary, counts), true
 	case "parallel_extraction_completed":
 		return fmt.Sprintf("trace `%s`\n%s\nstatuses: %v\ncounts: %v", event.TraceID, event.Summary, summary.ExtractorStatuses, event.Payload["counts"]), true
+	case "message_extraction_persisted":
+		return fmt.Sprintf("trace `%s`\n%s\nstatuses: %v", event.TraceID, event.Summary, summary.ExtractorStatuses), true
 	case "working_state_updated":
 		return fmt.Sprintf("trace `%s`\n%s\nsummary_status: %v\ncounts: %v", event.TraceID, event.Summary, summary.SummaryUpdateStatus, event.Payload["counts"]), true
 	case "response_context_built":
 		return fmt.Sprintf("trace `%s`\n%s\nbrief: %q", event.TraceID, event.Summary, payloadString(summary.ResponseContext, "brief")), true
-	case "extract_topics_result":
-		return fmt.Sprintf("trace `%s`\n%s\ntopics: %v", event.TraceID, event.Summary, summary.TopicCandidates), true
-	case "extract_facts_result":
-		return fmt.Sprintf("trace `%s`\n%s\nfacts: %v", event.TraceID, event.Summary, summary.FactCandidates), true
 	case "ollama_request", "ollama_response":
 		return fmt.Sprintf("trace `%s`\n%s\npurpose: %v", event.TraceID, event.Summary, event.Payload["purpose"]), true
-	case "topics_resolved":
-		return fmt.Sprintf("trace `%s`\n%s\nresolved_topics: %v", event.TraceID, event.Summary, summary.ResolvedTopics), true
-	case "facts_resolved":
-		return fmt.Sprintf("trace `%s`\n%s\npersisted_facts: %v", event.TraceID, event.Summary, summary.PersistedFacts), true
+	case "working_state_rebuilt":
+		return fmt.Sprintf("trace `%s`\n%s\nmessage_count: %v", event.TraceID, event.Summary, event.Payload["message_count"]), true
 	case "generate_reply_result", "reply_generated":
 		return fmt.Sprintf("trace `%s`\n%s\nreply: %v", event.TraceID, event.Summary, summary.Reply), true
 	case "reply_sent":
@@ -241,14 +234,13 @@ func (r *DiscordReporter) attachmentsForEvent(written WrittenEvent) []string {
 
 func allowAttachment(kind string) bool {
 	switch kind {
-	case "retrieve_for_extraction",
-		"retrieve_for_generation",
-		"parallel_extraction_completed",
+	case "parallel_extraction_completed",
+		"message_extraction_persisted",
 		"ollama_request",
 		"ollama_response",
 		"working_state_updated",
 		"response_context_built",
-		"facts_resolved",
+		"working_state_rebuilt",
 		"generate_reply_result",
 		"reply_sent":
 		return true

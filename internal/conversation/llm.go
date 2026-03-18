@@ -18,16 +18,14 @@ type promptEnvelope struct {
 }
 
 type extractionDimension struct {
-	Name      string
-	Status    string
-	Raw       string
-	Model     string
-	Err       error
-	Claims    []models.Claim
-	Questions []models.OpenQuestion
-	Topics    []models.TopicRef
-	Pronouns  []models.PronounResolution
-	Summary   string
+	Name    string
+	Status  string
+	Raw     string
+	Model   string
+	Err     error
+	Claims  []models.Claim
+	Topics  []models.TopicRef
+	Summary string
 }
 
 type summaryUpdateResult struct {
@@ -48,26 +46,8 @@ type claimPayload struct {
 	Object    string `json:"object"`
 }
 
-type questionsPayload struct {
-	Questions []questionPayload `json:"questions"`
-}
-
-type questionPayload struct {
-	Text string `json:"text"`
-}
-
 type topicsPayload struct {
 	Topics []string `json:"topics"`
-}
-
-type pronounsPayload struct {
-	Bindings []pronounPayload `json:"bindings"`
-}
-
-type pronounPayload struct {
-	Expression string  `json:"expression"`
-	Referent   string  `json:"referent"`
-	Confidence float64 `json:"confidence"`
 }
 
 type summaryPayload struct {
@@ -111,36 +91,6 @@ Rules:
 	return extractionDimension{Name: "claims", Status: status, Raw: raw, Model: model, Claims: claims}
 }
 
-func (e *Engine) extractQuestions(ctx context.Context, envelope promptEnvelope) extractionDimension {
-	systemPrompt := `You extract open questions that matter for conversational continuity.
-Return ONLY valid JSON with this exact schema:
-{
-  "questions": [
-    {
-      "text": "open question"
-    }
-  ]
-}
-
-Rules:
-- Include explicit or strongly implied questions that remain unresolved after this message.
-- Extract at most 3 questions.
-- Keep text concise and readable.
-- If there are no meaningful open questions, return {"questions":[]}.`
-
-	userPrompt := buildSharedPromptEnvelope(envelope)
-	raw, model, err := e.callLLM(ctx, "extract_questions", systemPrompt, userPrompt)
-	if err != nil {
-		return extractionDimension{Name: "questions", Status: "failed", Raw: raw, Model: model, Err: err}
-	}
-
-	questions, status, parseErr := parseQuestionsPayload(raw, envelope.CurrentMessage.MessageID)
-	if parseErr != nil {
-		return extractionDimension{Name: "questions", Status: "failed", Raw: raw, Model: model, Err: parseErr}
-	}
-	return extractionDimension{Name: "questions", Status: status, Raw: raw, Model: model, Questions: questions}
-}
-
 func (e *Engine) extractTopics(ctx context.Context, envelope promptEnvelope) extractionDimension {
 	systemPrompt := `You extract active conversational topics.
 Return ONLY valid JSON with this exact schema:
@@ -165,38 +115,6 @@ Rules:
 		return extractionDimension{Name: "topics", Status: "failed", Raw: raw, Model: model, Err: parseErr}
 	}
 	return extractionDimension{Name: "topics", Status: status, Raw: raw, Model: model, Topics: topics}
-}
-
-func (e *Engine) extractPronouns(ctx context.Context, envelope promptEnvelope) extractionDimension {
-	systemPrompt := `You resolve local references for conversational continuity.
-Return ONLY valid JSON with this exact schema:
-{
-  "bindings": [
-    {
-      "expression": "it",
-      "referent": "specific referent",
-      "confidence": 0.0
-    }
-  ]
-}
-
-Rules:
-- Include only bindings supported by the provided context.
-- Use confidence between 0.0 and 1.0.
-- Extract at most 4 bindings.
-- If nothing needs resolution, return {"bindings":[]}.`
-
-	userPrompt := buildSharedPromptEnvelope(envelope)
-	raw, model, err := e.callLLM(ctx, "extract_pronouns", systemPrompt, userPrompt)
-	if err != nil {
-		return extractionDimension{Name: "pronouns", Status: "failed", Raw: raw, Model: model, Err: err}
-	}
-
-	bindings, status, parseErr := parsePronounsPayload(raw, envelope.CurrentMessage.MessageID)
-	if parseErr != nil {
-		return extractionDimension{Name: "pronouns", Status: "failed", Raw: raw, Model: model, Err: parseErr}
-	}
-	return extractionDimension{Name: "pronouns", Status: status, Raw: raw, Model: model, Pronouns: bindings}
 }
 
 func (e *Engine) summarizeMessage(ctx context.Context, envelope promptEnvelope) extractionDimension {
@@ -233,7 +151,7 @@ Return ONLY valid JSON with this exact schema:
 
 Rules:
 - Keep the summary readable, compact, and focused on the current direction.
-- Favor recent developments, decisions, unresolved questions, and active topics.
+- Favor recent developments, important claims, and active topics.
 - Do not restate the entire conversation.
 - Use the current raw message and recent evidence, not just the previous summary.`
 
@@ -328,23 +246,6 @@ func buildSharedPromptEnvelope(envelope promptEnvelope) string {
 			builder.WriteString(")\n")
 		}
 	}
-
-	builder.WriteString("\ncurrent_open_questions:\n")
-	openCount := 0
-	for _, question := range envelope.WorkingState.OpenQuestions {
-		if question.Status != "open" {
-			continue
-		}
-		openCount++
-		builder.WriteString("- ")
-		builder.WriteString(question.Text)
-		builder.WriteString(" (salience=")
-		builder.WriteString(fmt.Sprintf("%.2f", question.Salience))
-		builder.WriteString(")\n")
-	}
-	if openCount == 0 {
-		builder.WriteString("- none\n")
-	}
 	return builder.String()
 }
 
@@ -376,17 +277,6 @@ func buildRollingSummaryPrompt(envelope promptEnvelope, extraction models.Messag
 		}
 	}
 
-	builder.WriteString("open_questions:\n")
-	if len(extraction.OpenQuestions) == 0 {
-		builder.WriteString("- none\n")
-	} else {
-		for _, question := range extraction.OpenQuestions {
-			builder.WriteString("- ")
-			builder.WriteString(question.Text)
-			builder.WriteString("\n")
-		}
-	}
-
 	builder.WriteString("topics:\n")
 	if len(extraction.ActiveTopics) == 0 {
 		builder.WriteString("- none\n")
@@ -395,21 +285,6 @@ func buildRollingSummaryPrompt(envelope promptEnvelope, extraction models.Messag
 			builder.WriteString("- ")
 			builder.WriteString(topic.Name)
 			builder.WriteString("\n")
-		}
-	}
-
-	builder.WriteString("pronoun_bindings:\n")
-	if len(extraction.PronounResolutions) == 0 {
-		builder.WriteString("- none\n")
-	} else {
-		for _, binding := range extraction.PronounResolutions {
-			builder.WriteString("- ")
-			builder.WriteString(binding.Expression)
-			builder.WriteString(" -> ")
-			builder.WriteString(binding.Referent)
-			builder.WriteString(" (")
-			builder.WriteString(fmt.Sprintf("%.2f", binding.Confidence))
-			builder.WriteString(")\n")
 		}
 	}
 	return builder.String()
@@ -469,32 +344,6 @@ func parseClaimsPayload(raw, sourceMessageID string) ([]models.Claim, string, er
 	return out, payloadStatus(len(out), dropped), nil
 }
 
-func parseQuestionsPayload(raw, sourceMessageID string) ([]models.OpenQuestion, string, error) {
-	body, err := extractJSONObject(raw)
-	if err != nil {
-		return nil, "", err
-	}
-	var payload questionsPayload
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, "", err
-	}
-
-	out := make([]models.OpenQuestion, 0, len(payload.Questions))
-	dropped := 0
-	for _, question := range payload.Questions {
-		text := normalizeQuestion(question.Text)
-		if text == "" {
-			dropped++
-			continue
-		}
-		out = append(out, models.OpenQuestion{
-			Text:            text,
-			SourceMessageID: sourceMessageID,
-		})
-	}
-	return out, payloadStatus(len(out), dropped), nil
-}
-
 func parseTopicsPayload(raw string) ([]models.TopicRef, string, error) {
 	body, err := extractJSONObject(raw)
 	if err != nil {
@@ -521,36 +370,6 @@ func parseTopicsPayload(raw string) ([]models.TopicRef, string, error) {
 			seen[name] = struct{}{}
 			out = append(out, models.TopicRef{Name: name})
 		}
-	}
-	return out, payloadStatus(len(out), dropped), nil
-}
-
-func parsePronounsPayload(raw, sourceMessageID string) ([]models.PronounResolution, string, error) {
-	body, err := extractJSONObject(raw)
-	if err != nil {
-		return nil, "", err
-	}
-	var payload pronounsPayload
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, "", err
-	}
-
-	out := make([]models.PronounResolution, 0, len(payload.Bindings))
-	dropped := 0
-	for _, binding := range payload.Bindings {
-		expression := normalizeExpression(binding.Expression)
-		referent := strings.TrimSpace(binding.Referent)
-		confidence := clamp(binding.Confidence, 0, 1)
-		if expression == "" || referent == "" {
-			dropped++
-			continue
-		}
-		out = append(out, models.PronounResolution{
-			Expression:      expression,
-			Referent:        referent,
-			Confidence:      confidence,
-			SourceMessageID: sourceMessageID,
-		})
 	}
 	return out, payloadStatus(len(out), dropped), nil
 }

@@ -79,7 +79,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, input models.RawMessage, op
 			"conversation_id": message.ConversationID,
 			"sequence_number": message.SequenceNumber,
 		},
-		"extractors": []string{"claims", "questions", "topics", "pronouns", "summary"},
+		"extractors": []string{"claims", "topics", "summary"},
 	})
 
 	extraction := e.runParallelExtractions(ctx, envelope)
@@ -200,34 +200,26 @@ func (e *Engine) RebuildConversationState(ctx context.Context, conversationID st
 
 func (e *Engine) runParallelExtractions(ctx context.Context, envelope promptEnvelope) models.MessageExtraction {
 	result := models.MessageExtraction{
-		MessageID:       envelope.CurrentMessage.MessageID,
-		ConversationID:  envelope.CurrentMessage.ConversationID,
-		ClaimsStatus:    "failed",
-		QuestionsStatus: "failed",
-		TopicsStatus:    "failed",
-		PronounsStatus:  "failed",
-		SummaryStatus:   "failed",
+		MessageID:      envelope.CurrentMessage.MessageID,
+		ConversationID: envelope.CurrentMessage.ConversationID,
+		ClaimsStatus:   "failed",
+		TopicsStatus:   "failed",
+		SummaryStatus:  "failed",
 	}
 
 	calls := []struct {
 		name string
 		run  func(context.Context, promptEnvelope) extractionDimension
-	}{
-		{name: "claims", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-			return e.extractClaims(callCtx, prompt)
-		}},
-		{name: "questions", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-			return e.extractQuestions(callCtx, prompt)
-		}},
-		{name: "topics", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-			return e.extractTopics(callCtx, prompt)
-		}},
-		{name: "pronouns", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-			return e.extractPronouns(callCtx, prompt)
-		}},
-		{name: "summary", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-			return e.summarizeMessage(callCtx, prompt)
-		}},
+		}{
+			{name: "claims", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+				return e.extractClaims(callCtx, prompt)
+			}},
+			{name: "topics", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+				return e.extractTopics(callCtx, prompt)
+			}},
+			{name: "summary", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+				return e.summarizeMessage(callCtx, prompt)
+			}},
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, e.batchTimeout())
@@ -261,31 +253,21 @@ func (e *Engine) runParallelExtractions(ctx context.Context, envelope promptEnve
 		}
 	}
 
-	for _, res := range collected {
-		switch res.Name {
-		case "claims":
-			result.Claims = res.Claims
-			result.ClaimsStatus = fallbackStatus(res.Status)
-			result.ClaimsModelVersion = firstNonEmpty(res.Model, e.model)
-			result.RawClaimsOutput = res.Raw
-		case "questions":
-			result.OpenQuestions = res.Questions
-			result.QuestionsStatus = fallbackStatus(res.Status)
-			result.QuestionsModelVersion = firstNonEmpty(res.Model, e.model)
-			result.RawQuestionsOutput = res.Raw
-		case "topics":
-			result.ActiveTopics = res.Topics
-			result.TopicsStatus = fallbackStatus(res.Status)
-			result.TopicsModelVersion = firstNonEmpty(res.Model, e.model)
-			result.RawTopicsOutput = res.Raw
-		case "pronouns":
-			result.PronounResolutions = res.Pronouns
-			result.PronounsStatus = fallbackStatus(res.Status)
-			result.PronounsModelVersion = firstNonEmpty(res.Model, e.model)
-			result.RawPronounsOutput = res.Raw
-		case "summary":
-			result.MessageSummary = res.Summary
-			result.SummaryStatus = fallbackStatus(res.Status)
+		for _, res := range collected {
+			switch res.Name {
+			case "claims":
+				result.Claims = res.Claims
+				result.ClaimsStatus = fallbackStatus(res.Status)
+				result.ClaimsModelVersion = firstNonEmpty(res.Model, e.model)
+				result.RawClaimsOutput = res.Raw
+			case "topics":
+				result.ActiveTopics = res.Topics
+				result.TopicsStatus = fallbackStatus(res.Status)
+				result.TopicsModelVersion = firstNonEmpty(res.Model, e.model)
+				result.RawTopicsOutput = res.Raw
+			case "summary":
+				result.MessageSummary = res.Summary
+				result.SummaryStatus = fallbackStatus(res.Status)
 			result.SummaryModelVersion = firstNonEmpty(res.Model, e.model)
 			result.RawSummaryOutput = res.Raw
 		}

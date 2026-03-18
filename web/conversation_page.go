@@ -35,11 +35,6 @@ func ConversationPage() *Node {
 								T("Transcript, per-message artifacts, working state, and telemetry traces"),
 							),
 						),
-						A(
-							Href("/graph"),
-							Class("btn btn-sm border-slate-300 bg-white text-slate-900 hover:border-cyan-500 hover:bg-cyan-50"),
-							T("Open Legacy Graph"),
-						),
 						Button(
 							Id("conversation-reload-btn"),
 							Type("button"),
@@ -80,7 +75,7 @@ func ConversationPage() *Node {
 					),
 				),
 			),
-			Script(T(conversationPageScript())),
+			Script(Raw(conversationPageScript())),
 		),
 	)
 }
@@ -203,18 +198,8 @@ function renderConversationDetail() {
     return '<li><span class="font-medium text-slate-900">' + escapeHtml(topic.name) + '</span> <span class="text-slate-500">(' + escapeHtml(topic.status) + ', ' + escapeHtml(Number(topic.salience || 0).toFixed(2)) + ')</span></li>';
   }).join('') || '<li>none</li>';
 
-  var openQuestions = (workingState.open_questions || []).filter(function(question) {
-    return question.status === 'open';
-  }).map(function(question) {
-    return '<li><span class="font-medium text-slate-900">' + escapeHtml(question.text) + '</span> <span class="text-slate-500">(' + escapeHtml(Number(question.salience || 0).toFixed(2)) + ')</span></li>';
-  }).join('') || '<li>none</li>';
-
   var activeClaims = (workingState.active_claims || []).map(function(claim) {
     return '<li><span class="font-medium text-slate-900">' + escapeHtml(claim.subject + ' | ' + claim.predicate + ' | ' + claim.object) + '</span> <span class="text-slate-500">(' + escapeHtml(Number(claim.salience || 0).toFixed(2)) + ')</span></li>';
-  }).join('') || '<li>none</li>';
-
-  var references = (workingState.pronoun_resolution_map || []).map(function(binding) {
-    return '<li><span class="font-medium text-slate-900">' + escapeHtml(binding.expression) + '</span> -> ' + escapeHtml(binding.referent) + ' <span class="text-slate-500">(' + escapeHtml(Number(binding.confidence || 0).toFixed(2)) + ')</span></li>';
   }).join('') || '<li>none</li>';
 
   var recentMessages = (selected.recent_messages || []).map(function(message) {
@@ -230,14 +215,12 @@ function renderConversationDetail() {
 
   var recentExtractions = (selected.recent_extractions || []).map(function(extraction) {
     return '<details class="rounded-2xl border border-slate-200 bg-white px-4 py-3">' +
-      '<summary class="cursor-pointer font-medium text-slate-900">' + escapeHtml(extraction.message_id) + ' <span class="text-xs text-slate-500">claims=' + escapeHtml(extraction.claims_status) + ', questions=' + escapeHtml(extraction.questions_status) + ', topics=' + escapeHtml(extraction.topics_status) + ', pronouns=' + escapeHtml(extraction.pronouns_status) + ', summary=' + escapeHtml(extraction.summary_status) + '</span></summary>' +
+      '<summary class="cursor-pointer font-medium text-slate-900">' + escapeHtml(extraction.message_id) + ' <span class="text-xs text-slate-500">claims=' + escapeHtml(extraction.claims_status) + ', topics=' + escapeHtml(extraction.topics_status) + ', summary=' + escapeHtml(extraction.summary_status) + '</span></summary>' +
       '<div class="mt-3 grid gap-3 lg:grid-cols-2">' +
         '<pre class="conversation-pre rounded-xl bg-slate-950 p-3 text-xs text-slate-100">' + prettyJson(extraction) + '</pre>' +
         '<div class="space-y-3">' +
           '<div><p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Raw Claims Output</p><pre class="conversation-pre mt-2 rounded-xl bg-slate-100 p-3 text-xs text-slate-800">' + escapeHtml(extraction.raw_claims_output || '') + '</pre></div>' +
-          '<div><p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Raw Questions Output</p><pre class="conversation-pre mt-2 rounded-xl bg-slate-100 p-3 text-xs text-slate-800">' + escapeHtml(extraction.raw_questions_output || '') + '</pre></div>' +
           '<div><p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Raw Topics Output</p><pre class="conversation-pre mt-2 rounded-xl bg-slate-100 p-3 text-xs text-slate-800">' + escapeHtml(extraction.raw_topics_output || '') + '</pre></div>' +
-          '<div><p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Raw Pronouns Output</p><pre class="conversation-pre mt-2 rounded-xl bg-slate-100 p-3 text-xs text-slate-800">' + escapeHtml(extraction.raw_pronouns_output || '') + '</pre></div>' +
           '<div><p class="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Raw Summary Output</p><pre class="conversation-pre mt-2 rounded-xl bg-slate-100 p-3 text-xs text-slate-800">' + escapeHtml(extraction.raw_summary_output || '') + '</pre></div>' +
         '</div>' +
       '</div>' +
@@ -265,9 +248,7 @@ function renderConversationDetail() {
         section('Rolling Summary', '<p class="text-sm leading-7 text-slate-800">' + escapeHtml(workingState.rolling_summary || 'No rolling summary yet.') + '</p>') +
         section('Response Context Brief', '<pre class="conversation-pre rounded-xl bg-slate-950 p-4 text-xs text-slate-100">' + escapeHtml((selected.latest_response_context && selected.latest_response_context.brief) || 'No response context artifact yet.') + '</pre>') +
         section('Active Topics', '<ul class="space-y-2 text-sm text-slate-700">' + activeTopics + '</ul>') +
-        section('Open Questions', '<ul class="space-y-2 text-sm text-slate-700">' + openQuestions + '</ul>') +
         section('Active Claims', '<ul class="space-y-2 text-sm text-slate-700">' + activeClaims + '</ul>') +
-        section('Current References', '<ul class="space-y-2 text-sm text-slate-700">' + references + '</ul>') +
       '</div>' +
       section('Recent Exchange', '<div class="space-y-3">' + recentMessages + '</div>') +
       section('Recent Message Extractions', '<div class="space-y-3">' + recentExtractions + '</div>') +

@@ -16,7 +16,6 @@ import (
 	"github.com/n0remac/Knowledge-Graph/internal/generate"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
-	"github.com/n0remac/Knowledge-Graph/internal/store"
 	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
 
@@ -27,7 +26,6 @@ const (
 
 type Runtime struct {
 	cfg               config.Config
-	store             *store.Store
 	conversationStore *conversation.Store
 	engine            *conversation.Engine
 	generator         *generate.Generator
@@ -47,14 +45,8 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 		return nil, err
 	}
 
-	graphStore, err := store.NewGraph(cfg.GraphStorePath, manager)
-	if err != nil {
-		_ = manager.Close()
-		return nil, err
-	}
 	conversationStore, err := conversation.NewStore(cfg.ConversationStorePath, manager)
 	if err != nil {
-		_ = graphStore.Close()
 		_ = manager.Close()
 		return nil, err
 	}
@@ -65,7 +57,6 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 
 	runtime := &Runtime{
 		cfg:               cfg,
-		store:             graphStore,
 		conversationStore: conversationStore,
 		engine:            engine,
 		generator:         generator,
@@ -80,9 +71,8 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 
 func (r *Runtime) Run() error {
 	log.Printf(
-		"startup mode=%q graph_store_path=%q conversation_store_path=%q ollama_base_url=%q chat_model=%q extract_model=%q",
+		"startup mode=%q conversation_store_path=%q ollama_base_url=%q chat_model=%q extract_model=%q",
 		"conversation-state",
-		r.cfg.GraphStorePath,
 		r.cfg.ConversationStorePath,
 		r.cfg.OllamaBaseURL,
 		r.cfg.OllamaChatModel,
@@ -117,9 +107,6 @@ func (r *Runtime) Close() error {
 		if err := r.conversationStore.Close(); err != nil {
 			return err
 		}
-	}
-	if r.store != nil {
-		return r.store.Close()
 	}
 	return nil
 }

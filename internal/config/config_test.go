@@ -13,11 +13,14 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 	if !cfg.Telemetry.Enabled {
 		t.Fatalf("expected telemetry enabled by default")
 	}
-	if cfg.GraphWebAddr != "127.0.0.1:8080" {
-		t.Fatalf("GraphWebAddr = %q", cfg.GraphWebAddr)
+	if cfg.WebAddr != "127.0.0.1:8080" {
+		t.Fatalf("WebAddr = %q", cfg.WebAddr)
 	}
 	if cfg.ConversationStorePath != "data/conversation-state.json" {
 		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
+	}
+	if cfg.TestSuiteTimeout.Seconds() != 180 {
+		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
 	}
 	if cfg.Telemetry.BaseDir != "data/telemetry" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)
@@ -38,10 +41,10 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	t.Setenv("TELEMETRY_WRITE_RAW_PROMPT_FILES", "false")
 	t.Setenv("TELEMETRY_WRITE_RAW_RESPONSE_FILES", "false")
 	t.Setenv("TELEMETRY_WRITE_STORE_EVENTS", "false")
-	t.Setenv("TELEMETRY_WRITE_RETRIEVAL_EVENTS", "false")
 	t.Setenv("TELEMETRY_WRITE_RUNTIME_EVENTS", "false")
-	t.Setenv("GRAPH_WEB_ADDR", "0.0.0.0:9000")
+	t.Setenv("WEB_ADDR", "0.0.0.0:9000")
 	t.Setenv("CONVERSATION_STORE_PATH", "./tmp/conversations.json")
+	t.Setenv("TEST_SUITE_REQUEST_TIMEOUT_SECONDS", "240")
 
 	cfg, err := Load()
 	if err != nil {
@@ -51,11 +54,14 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	if cfg.Telemetry.Enabled {
 		t.Fatalf("expected telemetry disabled")
 	}
-	if cfg.GraphWebAddr != "0.0.0.0:9000" {
-		t.Fatalf("GraphWebAddr = %q", cfg.GraphWebAddr)
+	if cfg.WebAddr != "0.0.0.0:9000" {
+		t.Fatalf("WebAddr = %q", cfg.WebAddr)
 	}
 	if cfg.ConversationStorePath != "tmp/conversations.json" {
 		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
+	}
+	if cfg.TestSuiteTimeout.Seconds() != 240 {
+		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
 	}
 	if cfg.Telemetry.BaseDir != "tmp/traces" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)
@@ -69,7 +75,7 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	if cfg.Telemetry.DiscordDebugChannelID != "debug-1" {
 		t.Fatalf("DiscordDebugChannelID = %q", cfg.Telemetry.DiscordDebugChannelID)
 	}
-	if cfg.Telemetry.WriteRawPromptFiles || cfg.Telemetry.WriteRawResponseFiles || cfg.Telemetry.WriteStoreEvents || cfg.Telemetry.WriteRetrievalEvents || cfg.Telemetry.WriteRuntimeEvents {
+	if cfg.Telemetry.WriteRawPromptFiles || cfg.Telemetry.WriteRawResponseFiles || cfg.Telemetry.WriteStoreEvents || cfg.Telemetry.WriteRuntimeEvents {
 		t.Fatalf("expected write flags to be false: %+v", cfg.Telemetry)
 	}
 }

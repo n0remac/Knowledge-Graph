@@ -25,20 +25,28 @@ func TestApplyEventToSummary(t *testing.T) {
 	applyEventToSummary(&summary, Event{
 		TraceID:   "trace-1",
 		Timestamp: now,
-		Stage:     StageExtraction,
-		Kind:      "extract_topics_result",
+		Stage:     StageConversation,
+		Kind:      "parallel_extraction_completed",
 		Payload: map[string]any{
-			"topics": []string{"telemetry", "debugging"},
+			"extractor_statuses": map[string]any{
+				"claims":  "ok",
+				"topics":  "ok",
+				"summary": "ok",
+			},
+			"message_extraction": map[string]any{
+				"message_summary": "The user asked about telemetry debugging.",
+			},
 		},
 	})
 	applyEventToSummary(&summary, Event{
 		TraceID:   "trace-1",
 		Timestamp: now,
-		Stage:     StageResolution,
-		Kind:      "facts_resolved",
+		Stage:     StageConversation,
+		Kind:      "working_state_updated",
 		Payload: map[string]any{
-			"facts": []map[string]any{
-				{"kind": "project", "value_text": "uses traces"},
+			"summary_update_status": "ok",
+			"working_state": map[string]any{
+				"rolling_summary": "The conversation is focused on telemetry debugging.",
 			},
 		},
 	})
@@ -55,11 +63,11 @@ func TestApplyEventToSummary(t *testing.T) {
 	if summary.SourceMessage["content"] != "hello" {
 		t.Fatalf("source message not captured: %#v", summary.SourceMessage)
 	}
-	if len(summary.TopicCandidates) != 2 {
-		t.Fatalf("topic candidates = %d, want 2", len(summary.TopicCandidates))
+	if summary.ExtractorStatuses["topics"] != "ok" {
+		t.Fatalf("extractor statuses = %#v, want topics=ok", summary.ExtractorStatuses)
 	}
-	if len(summary.PersistedFacts) != 1 {
-		t.Fatalf("persisted facts = %d, want 1", len(summary.PersistedFacts))
+	if summary.WorkingState["rolling_summary"] == "" {
+		t.Fatalf("working state not captured: %#v", summary.WorkingState)
 	}
 	if summary.Status != "completed" {
 		t.Fatalf("summary status = %q, want completed", summary.Status)
@@ -111,11 +119,9 @@ func TestApplyEventToSummaryCapturesConversationArtifacts(t *testing.T) {
 		Kind:      "parallel_extraction_completed",
 		Payload: map[string]any{
 			"extractor_statuses": map[string]any{
-				"claims":    "ok",
-				"questions": "partial",
-				"topics":    "ok",
-				"pronouns":  "failed",
-				"summary":   "ok",
+				"claims":  "ok",
+				"topics":  "ok",
+				"summary": "ok",
 			},
 			"message_extraction": map[string]any{
 				"message_summary": "Assistant updated the summary.",
@@ -149,7 +155,7 @@ func TestApplyEventToSummaryCapturesConversationArtifacts(t *testing.T) {
 	if summary.SourceMessage["author_role"] != "assistant" {
 		t.Fatalf("assistant source message not captured: %#v", summary.SourceMessage)
 	}
-	if summary.ExtractorStatuses["questions"] != "partial" {
+	if summary.ExtractorStatuses["topics"] != "ok" {
 		t.Fatalf("extractor statuses not captured: %#v", summary.ExtractorStatuses)
 	}
 	if summary.WorkingState["rolling_summary"] != "The assistant refined the live conversation state." {

@@ -15,13 +15,11 @@ const (
 	defaultOllamaBaseURL         = "http://localhost:11434"
 	defaultChatModel             = "qwen2.5:1.5b-instruct"
 	defaultPersona               = "You are a helpful Discord assistant."
-	defaultGraphStorePath        = "data/graph-store.json"
 	defaultConversationStorePath = "data/conversation-state.json"
-	defaultGraphWebAddr          = "127.0.0.1:8080"
-	defaultRecentMessageLimit    = 12
-	defaultRecallFactLimit       = 12
-	defaultRecallTopicLimit      = 8
+	defaultTestSuiteBaseDir      = "data/test-suite"
+	defaultWebAddr               = "127.0.0.1:8080"
 	defaultRequestTimeoutSec     = 45
+	defaultTestSuiteTimeoutSec   = 180
 )
 
 type Config struct {
@@ -30,13 +28,11 @@ type Config struct {
 	OllamaChatModel       string
 	OllamaExtractModel    string
 	Persona               string
-	GraphStorePath        string
 	ConversationStorePath string
-	GraphWebAddr          string
-	RecentMessageLimit    int
-	RecallFactLimit       int
-	RecallTopicLimit      int
+	TestSuiteBaseDir      string
+	WebAddr               string
 	RequestTimeout        time.Duration
+	TestSuiteTimeout      time.Duration
 	Telemetry             telemetry.Config
 }
 
@@ -50,23 +46,15 @@ func Load() (Config, error) {
 	chatModel := readEnvOrDefault("OLLAMA_CHAT_MODEL", readEnvOrDefault("OLLAMA_MODEL", defaultChatModel))
 	extractModel := readEnvOrDefault("OLLAMA_EXTRACT_MODEL", chatModel)
 	persona := readEnvOrDefault("BOT_PERSONA", defaultPersona)
-	graphStorePath := readEnvOrDefault("GRAPH_STORE_PATH", readEnvOrDefault("SQLITE_PATH", defaultGraphStorePath))
 	conversationStorePath := readEnvOrDefault("CONVERSATION_STORE_PATH", defaultConversationStorePath)
-	graphWebAddr := readEnvOrDefault("GRAPH_WEB_ADDR", defaultGraphWebAddr)
+	testSuiteBaseDir := readEnvOrDefault("TEST_SUITE_BASE_DIR", defaultTestSuiteBaseDir)
+	webAddr := readEnvOrDefault("WEB_ADDR", defaultWebAddr)
 
-	recentLimit, err := readIntEnv("RECENT_MESSAGE_LIMIT", defaultRecentMessageLimit)
-	if err != nil {
-		return Config{}, err
-	}
-	factLimit, err := readIntEnv("RECALL_FACT_LIMIT", defaultRecallFactLimit)
-	if err != nil {
-		return Config{}, err
-	}
-	topicLimit, err := readIntEnv("RECALL_TOPIC_LIMIT", defaultRecallTopicLimit)
-	if err != nil {
-		return Config{}, err
-	}
 	timeoutSec, err := readIntEnv("REQUEST_TIMEOUT_SECONDS", defaultRequestTimeoutSec)
+	if err != nil {
+		return Config{}, err
+	}
+	testSuiteTimeoutSec, err := readIntEnv("TEST_SUITE_REQUEST_TIMEOUT_SECONDS", defaultTestSuiteTimeoutSec)
 	if err != nil {
 		return Config{}, err
 	}
@@ -81,13 +69,11 @@ func Load() (Config, error) {
 		OllamaChatModel:       chatModel,
 		OllamaExtractModel:    extractModel,
 		Persona:               persona,
-		GraphStorePath:        filepath.Clean(graphStorePath),
 		ConversationStorePath: filepath.Clean(conversationStorePath),
-		GraphWebAddr:          graphWebAddr,
-		RecentMessageLimit:    recentLimit,
-		RecallFactLimit:       factLimit,
-		RecallTopicLimit:      topicLimit,
+		TestSuiteBaseDir:      filepath.Clean(testSuiteBaseDir),
+		WebAddr:               webAddr,
 		RequestTimeout:        time.Duration(timeoutSec) * time.Second,
+		TestSuiteTimeout:      time.Duration(testSuiteTimeoutSec) * time.Second,
 		Telemetry:             telemetryCfg,
 	}, nil
 }
@@ -123,10 +109,6 @@ func loadTelemetryConfig() (telemetry.Config, error) {
 	if err != nil {
 		return telemetry.Config{}, err
 	}
-	writeRetrievalEvents, err := readBoolEnv("TELEMETRY_WRITE_RETRIEVAL_EVENTS", defaults.WriteRetrievalEvents)
-	if err != nil {
-		return telemetry.Config{}, err
-	}
 	writeRuntimeEvents, err := readBoolEnv("TELEMETRY_WRITE_RUNTIME_EVENTS", defaults.WriteRuntimeEvents)
 	if err != nil {
 		return telemetry.Config{}, err
@@ -142,7 +124,6 @@ func loadTelemetryConfig() (telemetry.Config, error) {
 		WriteRawPromptFiles:    writePrompts,
 		WriteRawResponseFiles:  writeResponses,
 		WriteStoreEvents:       writeStoreEvents,
-		WriteRetrievalEvents:   writeRetrievalEvents,
 		WriteRuntimeEvents:     writeRuntimeEvents,
 	}, nil
 }

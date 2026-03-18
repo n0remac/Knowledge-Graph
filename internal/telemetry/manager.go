@@ -139,8 +139,6 @@ func (m *Manager) shouldEmit(stage, kind string) bool {
 		return m.cfg.WriteRuntimeEvents
 	case StageStore:
 		return m.cfg.WriteStoreEvents
-	case StageRetrieval:
-		return m.cfg.WriteRetrievalEvents
 	default:
 		return true
 	}

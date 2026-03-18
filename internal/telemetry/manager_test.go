@@ -34,7 +34,6 @@ func TestManagerCloseDrainsToDisk(t *testing.T) {
 		WriteRawPromptFiles:    true,
 		WriteRawResponseFiles:  true,
 		WriteStoreEvents:       true,
-		WriteRetrievalEvents:   true,
 		EnableDiscordReporting: false,
 	}, nil)
 	if err != nil {
