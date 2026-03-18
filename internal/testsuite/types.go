@@ -20,6 +20,16 @@ type RunRequest struct {
 	Persona      string `json:"persona"`
 }
 
+type RunConfig struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ChatModel       string `json:"chat_model"`
+	ExtractModel    string `json:"extract_model"`
+	Persona         string `json:"persona"`
+	CreatedAtUnixMs int64  `json:"created_at_unix_ms"`
+	UpdatedAtUnixMs int64  `json:"updated_at_unix_ms"`
+}
+
 type RunRecord struct {
 	ID                string          `json:"id"`
 	TranscriptID      string          `json:"transcript_id"`

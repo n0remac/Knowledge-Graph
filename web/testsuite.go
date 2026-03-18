@@ -11,6 +11,8 @@ import (
 func TestSuite(mux *http.ServeMux, service *testsuite.Service) {
 	mux.HandleFunc("/tests", ServeNode(TestSuitePage()))
 	mux.HandleFunc("/tests/data", TestSuiteDataHandler(service))
+	mux.HandleFunc("/tests/configs", TestSuiteRunConfigHandler(service))
+	mux.HandleFunc("/tests/configs/delete", TestSuiteRunConfigDeleteHandler(service))
 	mux.HandleFunc("/tests/transcripts", TestSuiteTranscriptHandler(service))
 	mux.HandleFunc("/tests/transcripts/delete", TestSuiteTranscriptDeleteHandler(service))
 	mux.HandleFunc("/tests/run", TestSuiteRunHandler(service))

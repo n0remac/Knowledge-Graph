@@ -29,6 +29,15 @@ func TestTestSuiteDataAndRunHandlers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveTranscript() error = %v", err)
 	}
+	_, err = service.SaveRunConfig(testsuite.RunConfig{
+		Name:         "Saved Config",
+		ChatModel:    "qwen2.5:1.5b-instruct",
+		ExtractModel: "llama3.2:3b",
+		Persona:      "Be helpful.",
+	})
+	if err != nil {
+		t.Fatalf("SaveRunConfig() error = %v", err)
+	}
 
 	dataRequest := httptest.NewRequest(http.MethodGet, "/tests/data", nil)
 	dataRecorder := httptest.NewRecorder()
@@ -49,6 +58,9 @@ func TestTestSuiteDataAndRunHandlers(t *testing.T) {
 	}
 	if len(data.Models) != 2 {
 		t.Fatalf("len(data.Models) = %d, want 2", len(data.Models))
+	}
+	if len(data.Configs) != 1 {
+		t.Fatalf("len(data.Configs) = %d, want 1", len(data.Configs))
 	}
 
 	runBody, err := json.Marshal(testsuite.RunRequest{TranscriptID: transcript.ID})
@@ -98,6 +110,48 @@ func TestTestSuitePageEmitsRawScript(t *testing.T) {
 	}
 	if strings.Contains(rendered, "fetch(&#39;/tests/data&#39;") {
 		t.Fatalf("test suite page script was HTML-escaped: %s", rendered)
+	}
+}
+
+func TestTestSuiteRunConfigHandlers(t *testing.T) {
+	t.Parallel()
+
+	service := newWebTestSuiteService(t)
+
+	body, err := json.Marshal(testsuite.RunConfig{
+		Name:         "Reusable Config",
+		ChatModel:    "qwen2.5:1.5b-instruct",
+		ExtractModel: "llama3.2:3b",
+		Persona:      "Answer briefly.",
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal(config) error = %v", err)
+	}
+
+	saveRequest := httptest.NewRequest(http.MethodPost, "/tests/configs", bytes.NewReader(body))
+	saveRecorder := httptest.NewRecorder()
+	TestSuiteRunConfigHandler(service).ServeHTTP(saveRecorder, saveRequest)
+	if saveRecorder.Code != http.StatusOK {
+		t.Fatalf("POST /tests/configs status = %d, want 200 body=%s", saveRecorder.Code, saveRecorder.Body.String())
+	}
+
+	var saved testsuite.RunConfig
+	if err := json.Unmarshal(saveRecorder.Body.Bytes(), &saved); err != nil {
+		t.Fatalf("json.Unmarshal(saved config) error = %v", err)
+	}
+	if saved.ID == "" {
+		t.Fatalf("saved.ID is empty")
+	}
+
+	deleteBody, err := json.Marshal(map[string]string{"id": saved.ID})
+	if err != nil {
+		t.Fatalf("json.Marshal(delete request) error = %v", err)
+	}
+	deleteRequest := httptest.NewRequest(http.MethodPost, "/tests/configs/delete", bytes.NewReader(deleteBody))
+	deleteRecorder := httptest.NewRecorder()
+	TestSuiteRunConfigDeleteHandler(service).ServeHTTP(deleteRecorder, deleteRequest)
+	if deleteRecorder.Code != http.StatusOK {
+		t.Fatalf("POST /tests/configs/delete status = %d, want 200 body=%s", deleteRecorder.Code, deleteRecorder.Body.String())
 	}
 }
 

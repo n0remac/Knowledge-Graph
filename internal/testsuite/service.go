@@ -56,7 +56,7 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	cfg.DefaultExtractModel = strings.TrimSpace(cfg.DefaultExtractModel)
 	cfg.DefaultPersona = strings.TrimSpace(cfg.DefaultPersona)
 
-	for _, path := range []string{cfg.BaseDir, filepath.Join(cfg.BaseDir, "transcripts"), filepath.Join(cfg.BaseDir, "runs")} {
+	for _, path := range []string{cfg.BaseDir, filepath.Join(cfg.BaseDir, "transcripts"), filepath.Join(cfg.BaseDir, "runs"), filepath.Join(cfg.BaseDir, "configs")} {
 		if err := os.MkdirAll(path, 0o755); err != nil {
 			return nil, fmt.Errorf("create test suite directory %q: %w", path, err)
 		}
@@ -143,6 +143,109 @@ func (s *Service) ListTranscripts() ([]Transcript, error) {
 		return out[i].UpdatedAtUnixMs > out[j].UpdatedAtUnixMs
 	})
 	return out, nil
+}
+
+func (s *Service) ListRunConfigs() ([]RunConfig, error) {
+	if s == nil {
+		return nil, fmt.Errorf("test suite service is not initialized")
+	}
+
+	entries, err := os.ReadDir(s.configsDir())
+	if err != nil {
+		return nil, fmt.Errorf("read run configs dir: %w", err)
+	}
+
+	out := make([]RunConfig, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		config, err := s.readRunConfigFile(filepath.Join(s.configsDir(), entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, config)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].UpdatedAtUnixMs == out[j].UpdatedAtUnixMs {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].UpdatedAtUnixMs > out[j].UpdatedAtUnixMs
+	})
+	return out, nil
+}
+
+func (s *Service) GetRunConfig(id string) (RunConfig, error) {
+	if s == nil {
+		return RunConfig{}, fmt.Errorf("test suite service is not initialized")
+	}
+
+	id = sanitizeID(id)
+	if id == "" {
+		return RunConfig{}, ErrNotFound
+	}
+	config, err := s.readRunConfigFile(s.runConfigPath(id))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return RunConfig{}, ErrNotFound
+		}
+		return RunConfig{}, err
+	}
+	return config, nil
+}
+
+func (s *Service) SaveRunConfig(input RunConfig) (RunConfig, error) {
+	if s == nil {
+		return RunConfig{}, fmt.Errorf("test suite service is not initialized")
+	}
+
+	nowUnixMs := time.Now().UTC().UnixMilli()
+	config, err := sanitizeRunConfig(input)
+	if err != nil {
+		return RunConfig{}, err
+	}
+
+	if config.ID == "" {
+		config.ID, err = s.nextRunConfigID(config.Name)
+		if err != nil {
+			return RunConfig{}, err
+		}
+		config.CreatedAtUnixMs = nowUnixMs
+	} else {
+		existing, getErr := s.GetRunConfig(config.ID)
+		if getErr != nil {
+			if errors.Is(getErr, ErrNotFound) {
+				return RunConfig{}, ErrNotFound
+			}
+			return RunConfig{}, getErr
+		}
+		config.CreatedAtUnixMs = existing.CreatedAtUnixMs
+	}
+	config.UpdatedAtUnixMs = nowUnixMs
+
+	if err := writeJSONAtomic(s.runConfigPath(config.ID), config); err != nil {
+		return RunConfig{}, fmt.Errorf("write run config: %w", err)
+	}
+	return config, nil
+}
+
+func (s *Service) DeleteRunConfig(id string) error {
+	if s == nil {
+		return fmt.Errorf("test suite service is not initialized")
+	}
+
+	id = sanitizeID(id)
+	if id == "" {
+		return ErrNotFound
+	}
+	if err := os.Remove(s.runConfigPath(id)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return ErrNotFound
+		}
+		return fmt.Errorf("delete run config: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) GetTranscript(id string) (Transcript, error) {
@@ -498,6 +601,23 @@ func (s *Service) prepareRunRequest(request RunRequest) (RunRequest, Transcript,
 	return req, transcript, nil
 }
 
+func sanitizeRunConfig(input RunConfig) (RunConfig, error) {
+	config := RunConfig{
+		ID:           sanitizeID(input.ID),
+		Name:         strings.TrimSpace(input.Name),
+		ChatModel:    strings.TrimSpace(input.ChatModel),
+		ExtractModel: strings.TrimSpace(input.ExtractModel),
+		Persona:      strings.TrimSpace(input.Persona),
+	}
+	if config.Name == "" {
+		return RunConfig{}, fmt.Errorf("run config name cannot be empty")
+	}
+	if config.ChatModel == "" || config.ExtractModel == "" || config.Persona == "" {
+		return RunConfig{}, fmt.Errorf("chat model, extract model, and persona are required")
+	}
+	return config, nil
+}
+
 func sanitizeTranscript(input Transcript) (Transcript, error) {
 	transcript := Transcript{
 		ID:          sanitizeID(input.ID),
@@ -561,6 +681,10 @@ func (s *Service) transcriptsDir() string {
 	return filepath.Join(s.cfg.BaseDir, "transcripts")
 }
 
+func (s *Service) configsDir() string {
+	return filepath.Join(s.cfg.BaseDir, "configs")
+}
+
 func (s *Service) runsDir() string {
 	return filepath.Join(s.cfg.BaseDir, "runs")
 }
@@ -571,6 +695,10 @@ func (s *Service) transcriptPath(id string) string {
 
 func (s *Service) runDir(id string) string {
 	return filepath.Join(s.runsDir(), sanitizeID(id))
+}
+
+func (s *Service) runConfigPath(id string) string {
+	return filepath.Join(s.configsDir(), sanitizeID(id)+".json")
 }
 
 func (s *Service) runResultPath(id string) string {
@@ -601,6 +729,14 @@ func (s *Service) readRunRecord(path string) (RunRecord, error) {
 	return record, nil
 }
 
+func (s *Service) readRunConfigFile(path string) (RunConfig, error) {
+	var config RunConfig
+	if err := readJSONFile(path, &config); err != nil {
+		return RunConfig{}, err
+	}
+	return config, nil
+}
+
 func sanitizeID(input string) string {
 	input = strings.TrimSpace(strings.ToLower(input))
 	if input == "" {
@@ -626,6 +762,25 @@ func sanitizeID(input string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "-")
+}
+
+func (s *Service) nextRunConfigID(name string) (string, error) {
+	base := sanitizeID(name)
+	if base == "" {
+		base = "config"
+	}
+	for i := 0; i < 1000; i++ {
+		candidate := base
+		if i > 0 {
+			candidate = fmt.Sprintf("%s-%d", base, i+1)
+		}
+		if _, err := os.Stat(s.runConfigPath(candidate)); errors.Is(err, os.ErrNotExist) {
+			return candidate, nil
+		} else if err != nil {
+			return "", fmt.Errorf("check run config id: %w", err)
+		}
+	}
+	return "", fmt.Errorf("unable to allocate run config id")
 }
 
 func parseOllamaListOutput(raw string) []ModelOption {

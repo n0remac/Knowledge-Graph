@@ -130,9 +130,12 @@ func testSuitePageScript() string {
 var testSuiteState = {
   defaults: { chat_model: '', extract_model: '', persona: '' },
   models: [],
+  configs: [],
   transcripts: [],
   runs: [],
   editorTranscript: null,
+  runForm: null,
+  selectedConfigId: '',
   selectedTranscriptId: '',
   selectedRunId: '',
   selectedRun: null,
@@ -194,8 +197,22 @@ function emptyTranscript() {
   };
 }
 
+function defaultRunForm() {
+  return {
+    id: '',
+    name: '',
+    chat_model: (testSuiteState.defaults && testSuiteState.defaults.chat_model) || '',
+    extract_model: (testSuiteState.defaults && testSuiteState.defaults.extract_model) || '',
+    persona: (testSuiteState.defaults && testSuiteState.defaults.persona) || ''
+  };
+}
+
 function selectedTranscript() {
   return testSuiteState.editorTranscript || emptyTranscript();
+}
+
+function selectedRunForm() {
+  return testSuiteState.runForm || defaultRunForm();
 }
 
 function selectedConversation() {
@@ -332,6 +349,8 @@ function renderRunPanel() {
   if (!panel) return;
   var defaults = testSuiteState.defaults || {};
   var models = testSuiteState.models || [];
+  var configs = testSuiteState.configs || [];
+  var runForm = selectedRunForm();
   var run = testSuiteState.selectedRun;
   var conversation = selectedConversation();
 
@@ -391,9 +410,30 @@ function renderRunPanel() {
   panel.innerHTML =
     section('Run Settings',
       '<div class="grid gap-4">' +
-        '<div><label class="tests-label" for="tests-chat-model">Chat Model</label><select id="tests-chat-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, defaults.chat_model || '') + '</select></div>' +
-        '<div><label class="tests-label" for="tests-extract-model">Extract Model</label><select id="tests-extract-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, defaults.extract_model || '') + '</select></div>' +
-        '<div><label class="tests-label" for="tests-persona">Persona</label><textarea id="tests-persona" class="textarea textarea-bordered mt-2 min-h-24 w-full border-slate-300 bg-white">' + escapeHtml(defaults.persona || '') + '</textarea></div>' +
+        '<div>' +
+          '<label class="tests-label" for="tests-run-config-select">Saved Configuration</label>' +
+          '<div class="mt-2 flex gap-2">' +
+            '<select id="tests-run-config-select" class="select select-bordered w-full border-slate-300 bg-white">' +
+              '<option value="">Custom / Defaults</option>' +
+              configs.map(function(config) {
+                var selectedAttr = config.id === testSuiteState.selectedConfigId ? ' selected' : '';
+                return '<option value="' + escapeHtml(config.id) + '"' + selectedAttr + '>' + escapeHtml(config.name) + '</option>';
+              }).join('') +
+            '</select>' +
+            '<button id="tests-new-config-btn" type="button" class="btn btn-sm border border-slate-300 bg-white text-slate-700">New</button>' +
+          '</div>' +
+        '</div>' +
+        '<div>' +
+          '<label class="tests-label" for="tests-run-config-name">Configuration Name</label>' +
+          '<div class="mt-2 flex gap-2">' +
+            '<input id="tests-run-config-name" class="input input-bordered w-full border-slate-300 bg-white" value="' + escapeHtml(runForm.name || '') + '" />' +
+            '<button id="tests-save-config-btn" type="button" class="btn btn-sm bg-slate-900 text-white hover:bg-cyan-700">Save Config</button>' +
+            '<button id="tests-delete-config-btn" type="button" class="btn btn-sm border border-slate-300 bg-white text-red-600">Delete</button>' +
+          '</div>' +
+        '</div>' +
+        '<div><label class="tests-label" for="tests-chat-model">Chat Model</label><select id="tests-chat-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, runForm.chat_model || defaults.chat_model || '') + '</select></div>' +
+        '<div><label class="tests-label" for="tests-extract-model">Extract Model</label><select id="tests-extract-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, runForm.extract_model || defaults.extract_model || '') + '</select></div>' +
+        '<div><label class="tests-label" for="tests-persona">Persona</label><textarea id="tests-persona" class="textarea textarea-bordered mt-2 min-h-24 w-full border-slate-300 bg-white">' + escapeHtml(runForm.persona || defaults.persona || '') + '</textarea></div>' +
       '</div>') +
     section('Recent Runs', '<div id="tests-runs-list" class="space-y-2">' + runsList + '</div>') +
     section('Selected Run',
@@ -428,6 +468,43 @@ function renderRunPanel() {
       loadRunConversation();
     });
   }
+  document.getElementById('tests-run-config-select').addEventListener('change', function(event) {
+    var configID = event.target.value;
+    if (!configID) {
+      testSuiteState.selectedConfigId = '';
+      testSuiteState.runForm = defaultRunForm();
+    } else {
+      var config = testSuiteState.configs.find(function(item) { return item.id === configID; });
+      if (config) {
+        testSuiteState.selectedConfigId = config.id;
+        testSuiteState.runForm = clone(config);
+      }
+    }
+    renderRunPanel();
+  });
+  document.getElementById('tests-new-config-btn').addEventListener('click', function() {
+    testSuiteState.selectedConfigId = '';
+    testSuiteState.runForm = defaultRunForm();
+    renderRunPanel();
+  });
+  document.getElementById('tests-run-config-name').addEventListener('input', function(event) {
+    testSuiteState.runForm.name = event.target.value;
+  });
+  document.getElementById('tests-chat-model').addEventListener('change', function(event) {
+    testSuiteState.runForm.chat_model = event.target.value;
+  });
+  document.getElementById('tests-extract-model').addEventListener('change', function(event) {
+    testSuiteState.runForm.extract_model = event.target.value;
+  });
+  document.getElementById('tests-persona').addEventListener('input', function(event) {
+    testSuiteState.runForm.persona = event.target.value;
+  });
+  document.getElementById('tests-save-config-btn').addEventListener('click', function() {
+    saveRunConfig();
+  });
+  document.getElementById('tests-delete-config-btn').addEventListener('click', function() {
+    deleteRunConfig();
+  });
 }
 
 async function loadData() {
@@ -440,8 +517,20 @@ async function loadData() {
     var payload = await response.json();
     testSuiteState.defaults = payload.defaults || { chat_model: '', extract_model: '', persona: '' };
     testSuiteState.models = payload.models || [];
+    testSuiteState.configs = payload.configs || [];
     testSuiteState.transcripts = payload.transcripts || [];
     testSuiteState.runs = payload.runs || [];
+    if (!testSuiteState.runForm) {
+      testSuiteState.runForm = defaultRunForm();
+    }
+    if (testSuiteState.selectedConfigId) {
+      var selectedConfig = testSuiteState.configs.find(function(item) { return item.id === testSuiteState.selectedConfigId; });
+      if (selectedConfig) {
+        testSuiteState.runForm = clone(selectedConfig);
+      } else {
+        testSuiteState.selectedConfigId = '';
+      }
+    }
 
     if (testSuiteState.selectedTranscriptId) {
       var selected = testSuiteState.transcripts.find(function(item) { return item.id === testSuiteState.selectedTranscriptId; });
@@ -525,6 +614,7 @@ async function deleteTranscript() {
 
 async function runTranscript() {
   var transcript = selectedTranscript();
+  var runForm = selectedRunForm();
   if (!transcript.id) {
     testsStatus('Save the transcript before running it.', true);
     return;
@@ -536,9 +626,9 @@ async function runTranscript() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         transcript_id: transcript.id,
-        chat_model: document.getElementById('tests-chat-model').value,
-        extract_model: document.getElementById('tests-extract-model').value,
-        persona: document.getElementById('tests-persona').value
+        chat_model: runForm.chat_model,
+        extract_model: runForm.extract_model,
+        persona: runForm.persona
       })
     });
     if (!response.ok) {
@@ -553,6 +643,61 @@ async function runTranscript() {
     testsStatus('Transcript run complete.', run.status !== 'completed');
   } catch (err) {
     testsStatus((err.message || 'Failed to run transcript.').trim(), true);
+  }
+}
+
+async function saveRunConfig() {
+  var runForm = selectedRunForm();
+  try {
+    var response = await fetch('/tests/configs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: testSuiteState.selectedConfigId,
+        name: runForm.name,
+        chat_model: runForm.chat_model,
+        extract_model: runForm.extract_model,
+        persona: runForm.persona
+      })
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    var saved = await response.json();
+    testSuiteState.selectedConfigId = saved.id;
+    testSuiteState.runForm = clone(saved);
+    await loadData();
+    testsStatus('Run configuration saved.', false);
+  } catch (err) {
+    testsStatus((err.message || 'Failed to save run configuration.').trim(), true);
+  }
+}
+
+async function deleteRunConfig() {
+  if (!testSuiteState.selectedConfigId) {
+    testSuiteState.runForm = defaultRunForm();
+    renderRunPanel();
+    testsStatus('Unsaved run configuration cleared.', false);
+    return;
+  }
+  if (!window.confirm('Delete this saved run configuration?')) {
+    return;
+  }
+  try {
+    var response = await fetch('/tests/configs/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: testSuiteState.selectedConfigId })
+    });
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    testSuiteState.selectedConfigId = '';
+    testSuiteState.runForm = defaultRunForm();
+    await loadData();
+    testsStatus('Run configuration deleted.', false);
+  } catch (err) {
+    testsStatus((err.message || 'Failed to delete run configuration.').trim(), true);
   }
 }
 

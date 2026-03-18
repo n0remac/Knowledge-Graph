@@ -66,6 +66,51 @@ func TestServiceTranscriptCRUD(t *testing.T) {
 	}
 }
 
+func TestServiceRunConfigCRUD(t *testing.T) {
+	t.Parallel()
+
+	server := newFakeOllamaServer(t, fakeOllamaConfig{})
+	t.Cleanup(server.Close)
+	service := newTestService(t, server.URL)
+
+	created, err := service.SaveRunConfig(RunConfig{
+		Name:         "Qwen Reasoning",
+		ChatModel:    "qwen3:8b",
+		ExtractModel: "qwen2.5:1.5b-instruct",
+		Persona:      "Be concise.",
+	})
+	if err != nil {
+		t.Fatalf("SaveRunConfig(create) error = %v", err)
+	}
+	if created.ID == "" {
+		t.Fatalf("created.ID is empty")
+	}
+
+	configs, err := service.ListRunConfigs()
+	if err != nil {
+		t.Fatalf("ListRunConfigs() error = %v", err)
+	}
+	if len(configs) != 1 {
+		t.Fatalf("len(configs) = %d, want 1", len(configs))
+	}
+
+	created.Persona = "Be concise and direct."
+	updated, err := service.SaveRunConfig(created)
+	if err != nil {
+		t.Fatalf("SaveRunConfig(update) error = %v", err)
+	}
+	if updated.Persona != "Be concise and direct." {
+		t.Fatalf("updated.Persona = %q", updated.Persona)
+	}
+
+	if err := service.DeleteRunConfig(created.ID); err != nil {
+		t.Fatalf("DeleteRunConfig() error = %v", err)
+	}
+	if _, err := service.GetRunConfig(created.ID); err == nil {
+		t.Fatalf("GetRunConfig() after delete returned nil error")
+	}
+}
+
 func TestServiceRunTranscriptPersistsArtifacts(t *testing.T) {
 	t.Parallel()
 

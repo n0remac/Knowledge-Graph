@@ -13,11 +13,16 @@ import (
 type TestSuiteData struct {
 	Defaults    testsuite.RunDefaults   `json:"defaults"`
 	Models      []testsuite.ModelOption `json:"models"`
+	Configs     []testsuite.RunConfig   `json:"configs"`
 	Transcripts []testsuite.Transcript  `json:"transcripts"`
 	Runs        []testsuite.RunRecord   `json:"runs"`
 }
 
 type transcriptDeleteRequest struct {
+	ID string `json:"id"`
+}
+
+type runConfigDeleteRequest struct {
 	ID string `json:"id"`
 }
 
@@ -47,13 +52,69 @@ func TestSuiteDataHandler(service *testsuite.Service) http.HandlerFunc {
 			http.Error(w, "failed to list ollama models", http.StatusInternalServerError)
 			return
 		}
+		configs, err := service.ListRunConfigs()
+		if err != nil {
+			http.Error(w, "failed to list saved run configs", http.StatusInternalServerError)
+			return
+		}
 
 		writeJSONResponse(w, TestSuiteData{
 			Defaults:    service.Defaults(),
 			Models:      models,
+			Configs:     configs,
 			Transcripts: transcripts,
 			Runs:        runs,
 		})
+	}
+}
+
+func TestSuiteRunConfigHandler(service *testsuite.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if service == nil {
+			http.Error(w, "test suite unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		var input testsuite.RunConfig
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		config, err := service.SaveRunConfig(input)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSONResponse(w, config)
+	}
+}
+
+func TestSuiteRunConfigDeleteHandler(service *testsuite.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if service == nil {
+			http.Error(w, "test suite unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		var request runConfigDeleteRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if err := service.DeleteRunConfig(request.ID); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSONResponse(w, map[string]bool{"deleted": true})
 	}
 }
 
