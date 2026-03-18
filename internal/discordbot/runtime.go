@@ -34,6 +34,10 @@ type Runtime struct {
 }
 
 func NewRuntime(cfg config.Config) (*Runtime, error) {
+	if err := config.ValidateBotConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	session, err := discordgo.New("Bot " + cfg.DiscordBotToken)
 	if err != nil {
 		return nil, err

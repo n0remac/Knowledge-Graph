@@ -47,7 +47,7 @@ func TestMergeWorkingStateRefreshesTopicsAndClaims(t *testing.T) {
 		},
 	}
 
-	merged := mergeWorkingState(previous, current, extraction, "The assistant explained the pipeline and rolling summary flow.", nil)
+	merged := mergeWorkingState(previous, current, extraction, "The assistant explained the pipeline and rolling summary flow.")
 
 	if merged.StateVersion != 2 {
 		t.Fatalf("merged.StateVersion = %d, want 2", merged.StateVersion)

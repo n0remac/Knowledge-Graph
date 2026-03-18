@@ -38,9 +38,6 @@ type Config struct {
 
 func Load() (Config, error) {
 	token := strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN"))
-	if token == "" {
-		return Config{}, fmt.Errorf("missing DISCORD_BOT_TOKEN")
-	}
 
 	baseURL := readEnvOrDefault("OLLAMA_BASE_URL", defaultOllamaBaseURL)
 	chatModel := readEnvOrDefault("OLLAMA_CHAT_MODEL", readEnvOrDefault("OLLAMA_MODEL", defaultChatModel))
@@ -76,6 +73,26 @@ func Load() (Config, error) {
 		TestSuiteTimeout:      time.Duration(testSuiteTimeoutSec) * time.Second,
 		Telemetry:             telemetryCfg,
 	}, nil
+}
+
+func ValidateBotConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.DiscordBotToken) == "" {
+		return fmt.Errorf("missing DISCORD_BOT_TOKEN")
+	}
+	if strings.TrimSpace(cfg.ConversationStorePath) == "" || cfg.ConversationStorePath == "." {
+		return fmt.Errorf("conversation store path cannot be empty")
+	}
+	return validateLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.RequestTimeout)
+}
+
+func ValidateWebConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.WebAddr) == "" {
+		return fmt.Errorf("web addr cannot be empty")
+	}
+	if strings.TrimSpace(cfg.TestSuiteBaseDir) == "" || cfg.TestSuiteBaseDir == "." {
+		return fmt.Errorf("test suite base dir cannot be empty")
+	}
+	return validateLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.TestSuiteTimeout)
 }
 
 func loadTelemetryConfig() (telemetry.Config, error) {
@@ -165,4 +182,23 @@ func readBoolEnv(name string, fallback bool) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid %s=%q: must be a boolean", name, raw)
 	}
+}
+
+func validateLLMConfig(baseURL, chatModel, extractModel, persona string, timeout time.Duration) error {
+	if strings.TrimSpace(baseURL) == "" {
+		return fmt.Errorf("ollama base url cannot be empty")
+	}
+	if strings.TrimSpace(chatModel) == "" {
+		return fmt.Errorf("chat model cannot be empty")
+	}
+	if strings.TrimSpace(extractModel) == "" {
+		return fmt.Errorf("extract model cannot be empty")
+	}
+	if strings.TrimSpace(persona) == "" {
+		return fmt.Errorf("persona cannot be empty")
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("request timeout must be > 0")
+	}
+	return nil
 }

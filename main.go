@@ -7,6 +7,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
 	"time"
 
 	"github.com/n0remac/Knowledge-Graph/internal/config"
@@ -26,16 +30,29 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
-
-	runtime, err := discordbot.NewRuntime(cfg)
-	if err != nil {
-		return fmt.Errorf("failed to initialize bot runtime: %w", err)
+	if err := config.ValidateWebConfig(cfg); err != nil {
+		return fmt.Errorf("web configuration error: %w", err)
 	}
-	defer func() {
-		if err := runtime.Close(); err != nil {
-			log.Printf("error during shutdown cleanup: %v", err)
+
+	var runtime *discordbot.Runtime
+	if strings.TrimSpace(cfg.DiscordBotToken) != "" {
+		if err := config.ValidateBotConfig(cfg); err != nil {
+			return fmt.Errorf("bot configuration error: %w", err)
 		}
-	}()
+		runtime, err = discordbot.NewRuntime(cfg)
+		if err != nil {
+			return fmt.Errorf("failed to initialize bot runtime: %w", err)
+		}
+	} else {
+		log.Printf("discord runtime disabled; DISCORD_BOT_TOKEN not set")
+	}
+	if runtime != nil {
+		defer func() {
+			if err := runtime.Close(); err != nil {
+				log.Printf("error during shutdown cleanup: %v", err)
+			}
+		}()
+	}
 
 	testSuiteService, err := testsuite.NewService(testsuite.ServiceConfig{
 		BaseDir:             cfg.TestSuiteBaseDir,
@@ -51,8 +68,10 @@ func run() error {
 	}
 
 	mux := http.NewServeMux()
-	webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 	webapp.TestSuite(mux, testSuiteService)
+	if runtime != nil {
+		webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
+	}
 
 	listener, err := net.Listen("tcp", cfg.WebAddr)
 	if err != nil {
@@ -73,6 +92,10 @@ func run() error {
 		}
 	}()
 
+	if runtime == nil {
+		waitForShutdownSignal()
+		return nil
+	}
 	if err := runtime.Run(); err != nil {
 		return fmt.Errorf("runtime error: %w", err)
 	}
@@ -87,4 +110,11 @@ func conversationViewerURL(addr string) string {
 		return "http://localhost" + addr + "/conversation"
 	}
 	return "http://" + addr + "/conversation"
+}
+
+func waitForShutdownSignal() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	log.Printf("shutdown signal received")
 }

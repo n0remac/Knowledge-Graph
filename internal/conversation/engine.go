@@ -56,7 +56,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, input models.RawMessage, op
 		return ProcessResult{}, err
 	}
 
-	replyTarget := e.resolveReplyTarget(message, options)
+	replyTarget := e.resolveReplyTarget(ctx, message, options)
 	previousState, ok := e.store.GetWorkingState(ctx, message.ConversationID)
 	if !ok {
 		previousState = models.WorkingState{ConversationID: message.ConversationID}
@@ -106,7 +106,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, input models.RawMessage, op
 		rollingSummary = summaryResult.Summary
 	}
 
-	mergedState := mergeWorkingState(previousState, message, savedExtraction, rollingSummary, e.sequenceForMessage)
+	mergedState := mergeWorkingState(previousState, message, savedExtraction, rollingSummary)
 	savedState, err := e.store.SaveWorkingState(ctx, mergedState)
 	if err != nil {
 		return ProcessResult{}, err
@@ -162,7 +162,7 @@ func (e *Engine) RebuildConversationState(ctx context.Context, conversationID st
 	state := models.WorkingState{ConversationID: conversationID}
 	for i, message := range messages {
 		extraction, _ := e.store.GetMessageExtractionByID(ctx, message.MessageID)
-		replyTarget := e.resolveReplyTarget(message, ProcessOptions{})
+		replyTarget := e.resolveReplyTarget(ctx, message, ProcessOptions{})
 		envelope := promptEnvelope{
 			CurrentMessage: message,
 			ReplyTarget:    replyTarget,
@@ -174,7 +174,7 @@ func (e *Engine) RebuildConversationState(ctx context.Context, conversationID st
 		if strings.TrimSpace(summaryResult.Summary) != "" && summaryResult.Status != "failed" {
 			rollingSummary = summaryResult.Summary
 		}
-		state = mergeWorkingState(state, message, extraction, rollingSummary, e.sequenceForMessage)
+		state = mergeWorkingState(state, message, extraction, rollingSummary)
 	}
 
 	savedState, err := e.store.SaveWorkingState(ctx, state)
@@ -210,16 +210,16 @@ func (e *Engine) runParallelExtractions(ctx context.Context, envelope promptEnve
 	calls := []struct {
 		name string
 		run  func(context.Context, promptEnvelope) extractionDimension
-		}{
-			{name: "claims", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-				return e.extractClaims(callCtx, prompt)
-			}},
-			{name: "topics", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-				return e.extractTopics(callCtx, prompt)
-			}},
-			{name: "summary", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
-				return e.summarizeMessage(callCtx, prompt)
-			}},
+	}{
+		{name: "claims", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+			return e.extractClaims(callCtx, prompt)
+		}},
+		{name: "topics", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+			return e.extractTopics(callCtx, prompt)
+		}},
+		{name: "summary", run: func(callCtx context.Context, prompt promptEnvelope) extractionDimension {
+			return e.summarizeMessage(callCtx, prompt)
+		}},
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, e.batchTimeout())
@@ -253,21 +253,21 @@ func (e *Engine) runParallelExtractions(ctx context.Context, envelope promptEnve
 		}
 	}
 
-		for _, res := range collected {
-			switch res.Name {
-			case "claims":
-				result.Claims = res.Claims
-				result.ClaimsStatus = fallbackStatus(res.Status)
-				result.ClaimsModelVersion = firstNonEmpty(res.Model, e.model)
-				result.RawClaimsOutput = res.Raw
-			case "topics":
-				result.ActiveTopics = res.Topics
-				result.TopicsStatus = fallbackStatus(res.Status)
-				result.TopicsModelVersion = firstNonEmpty(res.Model, e.model)
-				result.RawTopicsOutput = res.Raw
-			case "summary":
-				result.MessageSummary = res.Summary
-				result.SummaryStatus = fallbackStatus(res.Status)
+	for _, res := range collected {
+		switch res.Name {
+		case "claims":
+			result.Claims = res.Claims
+			result.ClaimsStatus = fallbackStatus(res.Status)
+			result.ClaimsModelVersion = firstNonEmpty(res.Model, e.model)
+			result.RawClaimsOutput = res.Raw
+		case "topics":
+			result.ActiveTopics = res.Topics
+			result.TopicsStatus = fallbackStatus(res.Status)
+			result.TopicsModelVersion = firstNonEmpty(res.Model, e.model)
+			result.RawTopicsOutput = res.Raw
+		case "summary":
+			result.MessageSummary = res.Summary
+			result.SummaryStatus = fallbackStatus(res.Status)
 			result.SummaryModelVersion = firstNonEmpty(res.Model, e.model)
 			result.RawSummaryOutput = res.Raw
 		}
@@ -301,7 +301,7 @@ func (e *Engine) summaryTimeout() time.Duration {
 	return defaultTimeout
 }
 
-func (e *Engine) resolveReplyTarget(message models.RawMessage, options ProcessOptions) *models.RawMessage {
+func (e *Engine) resolveReplyTarget(ctx context.Context, message models.RawMessage, options ProcessOptions) *models.RawMessage {
 	if options.ReplyTarget != nil && strings.TrimSpace(options.ReplyTarget.Content) != "" {
 		reply := sanitizeRawMessage(*options.ReplyTarget)
 		return &reply
@@ -309,27 +309,12 @@ func (e *Engine) resolveReplyTarget(message models.RawMessage, options ProcessOp
 	if strings.TrimSpace(message.ReplyToMessageID) == "" {
 		return nil
 	}
-	e.store.mu.RLock()
-	defer e.store.mu.RUnlock()
-	reply, ok := e.store.data.RawMessages[message.ReplyToMessageID]
+	reply, ok := e.store.GetRawMessageByID(ctx, message.ReplyToMessageID)
 	if !ok || strings.TrimSpace(reply.Content) == "" {
 		return nil
 	}
 	copied := reply
 	return &copied
-}
-
-func (e *Engine) sequenceForMessage(messageID string) int64 {
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" || e == nil || e.store == nil {
-		return 0
-	}
-	e.store.mu.RLock()
-	defer e.store.mu.RUnlock()
-	if message, ok := e.store.data.RawMessages[messageID]; ok {
-		return message.SequenceNumber
-	}
-	return 0
 }
 
 func promptRecentMessages(messages []models.RawMessage, currentMessageID string) []models.RawMessage {

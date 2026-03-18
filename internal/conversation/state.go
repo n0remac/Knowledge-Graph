@@ -26,7 +26,7 @@ const (
 	claimPruneThreshold       = 0.25
 )
 
-func mergeWorkingState(previous models.WorkingState, current models.RawMessage, extraction models.MessageExtraction, rollingSummary string, _ func(string) int64) models.WorkingState {
+func mergeWorkingState(previous models.WorkingState, current models.RawMessage, extraction models.MessageExtraction, rollingSummary string) models.WorkingState {
 	state := previous
 	state.ConversationID = current.ConversationID
 	state.LastUpdatedMessageID = current.MessageID

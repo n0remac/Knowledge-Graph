@@ -2,8 +2,38 @@ package config
 
 import "testing"
 
+func clearConfigEnv(t *testing.T) {
+	t.Helper()
+
+	for _, name := range []string{
+		"DISCORD_BOT_TOKEN",
+		"OLLAMA_BASE_URL",
+		"OLLAMA_CHAT_MODEL",
+		"OLLAMA_MODEL",
+		"OLLAMA_EXTRACT_MODEL",
+		"BOT_PERSONA",
+		"CONVERSATION_STORE_PATH",
+		"TEST_SUITE_BASE_DIR",
+		"WEB_ADDR",
+		"REQUEST_TIMEOUT_SECONDS",
+		"TEST_SUITE_REQUEST_TIMEOUT_SECONDS",
+		"TELEMETRY_ENABLED",
+		"TELEMETRY_BASE_DIR",
+		"TELEMETRY_ENABLE_DISCORD_REPORTING",
+		"TELEMETRY_DISCORD_DEBUG_CHANNEL_ID",
+		"TELEMETRY_BUFFER_SIZE",
+		"TELEMETRY_MAX_ATTACHMENT_BYTES",
+		"TELEMETRY_WRITE_RAW_PROMPT_FILES",
+		"TELEMETRY_WRITE_RAW_RESPONSE_FILES",
+		"TELEMETRY_WRITE_STORE_EVENTS",
+		"TELEMETRY_WRITE_RUNTIME_EVENTS",
+	} {
+		t.Setenv(name, "")
+	}
+}
+
 func TestLoadTelemetryDefaults(t *testing.T) {
-	t.Setenv("DISCORD_BOT_TOKEN", "token")
+	clearConfigEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -31,7 +61,8 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 }
 
 func TestLoadTelemetryOverrides(t *testing.T) {
-	t.Setenv("DISCORD_BOT_TOKEN", "token")
+	clearConfigEnv(t)
+
 	t.Setenv("TELEMETRY_ENABLED", "false")
 	t.Setenv("TELEMETRY_BASE_DIR", "./tmp/traces")
 	t.Setenv("TELEMETRY_BUFFER_SIZE", "123")
@@ -77,5 +108,55 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	}
 	if cfg.Telemetry.WriteRawPromptFiles || cfg.Telemetry.WriteRawResponseFiles || cfg.Telemetry.WriteStoreEvents || cfg.Telemetry.WriteRuntimeEvents {
 		t.Fatalf("expected write flags to be false: %+v", cfg.Telemetry)
+	}
+}
+
+func TestLoadDoesNotRequireDiscordToken(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.DiscordBotToken != "" {
+		t.Fatalf("DiscordBotToken = %q, want empty", cfg.DiscordBotToken)
+	}
+}
+
+func TestValidateBotConfigRequiresDiscordToken(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if err := ValidateBotConfig(cfg); err == nil {
+		t.Fatal("ValidateBotConfig() error = nil, want missing token error")
+	}
+}
+
+func TestValidateBotConfigAcceptsLoadedConfigWithToken(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("DISCORD_BOT_TOKEN", "token")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateBotConfig(cfg); err != nil {
+		t.Fatalf("ValidateBotConfig() error = %v", err)
+	}
+}
+
+func TestValidateWebConfigAcceptsLoadedConfigWithoutDiscordToken(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateWebConfig(cfg); err != nil {
+		t.Fatalf("ValidateWebConfig() error = %v", err)
 	}
 }
