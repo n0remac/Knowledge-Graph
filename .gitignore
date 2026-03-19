@@ -1,3 +1,4 @@
 .cache
 Knowledge-Graph
 data/*
+qdrant_storage/*

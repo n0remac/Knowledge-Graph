@@ -1,6 +1,7 @@
 package conversation
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"unicode"
@@ -167,62 +168,88 @@ func mergeClaims(previous []models.ClaimState, current []models.Claim, messageID
 	return out
 }
 
-func buildResponseContextArtifact(message models.RawMessage, state models.WorkingState, recentMessages []models.RawMessage) models.ResponseContextArtifact {
-	var builder strings.Builder
+func buildResponseContextArtifact(
+	message models.RawMessage,
+	state models.WorkingState,
+	recentMessages []models.RawMessage,
+) models.ResponseContextArtifact {
 
-	builder.WriteString("Current Conversation\n")
-	if strings.TrimSpace(state.RollingSummary) == "" {
-		builder.WriteString("No rolling summary yet.\n")
-	} else {
-		builder.WriteString(state.RollingSummary)
-		builder.WriteString("\n")
+	// Rolling summary
+	rollingSummary := state.RollingSummary
+	if strings.TrimSpace(rollingSummary) == "" {
+		rollingSummary = "No rolling summary yet."
 	}
 
-	builder.WriteString("\nActive Topics\n")
+	// Active topics
+	var activeTopicsStr string
 	if len(state.ActiveTopics) == 0 {
-		builder.WriteString("- none\n")
+		activeTopicsStr = "- none"
 	} else {
+		var parts []string
 		for _, topic := range state.ActiveTopics {
-			builder.WriteString("- ")
-			builder.WriteString(topic.Name)
-			builder.WriteString("\n")
+			parts = append(parts, fmt.Sprintf("- %s", topic.Name))
 		}
+		activeTopicsStr = strings.Join(parts, "\n")
 	}
 
-	builder.WriteString("\nRelated Claims\n")
+	// Related claims
 	relevantClaims := topicRelatedClaims(state.ActiveTopics, state.ActiveClaims)
+	var claimsStr string
 	if len(relevantClaims) == 0 {
-		builder.WriteString("- none\n")
+		claimsStr = "- none"
 	} else {
+		var parts []string
 		for _, claim := range relevantClaims {
-			builder.WriteString("- ")
-			builder.WriteString(claim.Subject)
-			builder.WriteString(" | ")
-			builder.WriteString(claim.Predicate)
-			builder.WriteString(" | ")
-			builder.WriteString(claim.Object)
-			builder.WriteString("\n")
+			parts = append(parts, fmt.Sprintf(
+				"- %s | %s | %s",
+				claim.Subject,
+				claim.Predicate,
+				claim.Object,
+			))
 		}
+		claimsStr = strings.Join(parts, "\n")
 	}
 
-	builder.WriteString("\nRecent Exchange\n")
+	// Recent exchange
+	var recentStr string
 	if len(recentMessages) == 0 {
-		builder.WriteString("- none\n")
+		recentStr = "- none"
 	} else {
+		var parts []string
 		for _, recent := range recentMessages {
-			builder.WriteString("- ")
-			builder.WriteString(renderMessageSpeaker(recent))
-			builder.WriteString(": ")
-			builder.WriteString(recent.Content)
-			builder.WriteString("\n")
+			parts = append(parts, fmt.Sprintf(
+				"- %s: %s",
+				renderMessageSpeaker(recent),
+				recent.Content,
+			))
 		}
+		recentStr = strings.Join(parts, "\n")
 	}
+
+	// Final context string (everything visible in one place)
+	contextStr := fmt.Sprintf(
+		`Current Conversation
+%s
+
+Active Topics
+%s
+
+Related Claims
+%s
+
+Recent Exchange
+%s`,
+		rollingSummary,
+		activeTopicsStr,
+		claimsStr,
+		recentStr,
+	)
 
 	return models.ResponseContextArtifact{
 		MessageID:           message.MessageID,
 		ConversationID:      message.ConversationID,
 		WorkingStateVersion: state.StateVersion,
-		Brief:               strings.TrimSpace(builder.String()),
+		Brief:               strings.TrimSpace(contextStr),
 		RecentMessageIDs:    lastMessageIDs(recentMessages),
 		CreatedAtUnixMs:     message.TimestampUnixMs,
 	}
