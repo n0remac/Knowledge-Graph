@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,28 +13,39 @@ import (
 )
 
 const (
-	defaultOllamaBaseURL         = "http://localhost:11434"
-	defaultChatModel             = "qwen2.5:1.5b-instruct"
-	defaultPersona               = "You are a helpful Discord assistant."
-	defaultConversationStorePath = "data/conversation-state.json"
-	defaultTestSuiteBaseDir      = "data/test-suite"
-	defaultWebAddr               = "127.0.0.1:8080"
-	defaultRequestTimeoutSec     = 45
-	defaultTestSuiteTimeoutSec   = 180
+	defaultOllamaBaseURL          = "http://localhost:11434"
+	defaultChatModel              = "qwen2.5:1.5b-instruct"
+	defaultEmbeddingModel         = "qwen3-embedding:4b"
+	defaultPersona                = "You are a helpful Discord assistant."
+	defaultConversationStorePath  = "data/conversation-state.json"
+	defaultTestSuiteBaseDir       = "data/test-suite"
+	defaultEmbeddingBaseDir       = "data/embedding-tests"
+	defaultWebAddr                = "127.0.0.1:8080"
+	defaultRequestTimeoutSec      = 45
+	defaultTestSuiteTimeoutSec    = 180
+	defaultEmbeddingTimeoutSec    = 180
+	defaultQdrantBaseURL          = "http://localhost:6333"
+	defaultQdrantCollectionPrefix = "embedding-v1"
 )
 
 type Config struct {
-	DiscordBotToken       string
-	OllamaBaseURL         string
-	OllamaChatModel       string
-	OllamaExtractModel    string
-	Persona               string
-	ConversationStorePath string
-	TestSuiteBaseDir      string
-	WebAddr               string
-	RequestTimeout        time.Duration
-	TestSuiteTimeout      time.Duration
-	Telemetry             telemetry.Config
+	DiscordBotToken        string
+	OllamaBaseURL          string
+	OllamaChatModel        string
+	OllamaExtractModel     string
+	OllamaEmbeddingModel   string
+	Persona                string
+	ConversationStorePath  string
+	TestSuiteBaseDir       string
+	EmbeddingBaseDir       string
+	QdrantBaseURL          string
+	QdrantAPIKey           string
+	QdrantCollectionPrefix string
+	WebAddr                string
+	RequestTimeout         time.Duration
+	TestSuiteTimeout       time.Duration
+	EmbeddingTimeout       time.Duration
+	Telemetry              telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -42,9 +54,14 @@ func Load() (Config, error) {
 	baseURL := readEnvOrDefault("OLLAMA_BASE_URL", defaultOllamaBaseURL)
 	chatModel := readEnvOrDefault("OLLAMA_CHAT_MODEL", readEnvOrDefault("OLLAMA_MODEL", defaultChatModel))
 	extractModel := readEnvOrDefault("OLLAMA_EXTRACT_MODEL", chatModel)
+	embeddingModel := readEnvOrDefault("OLLAMA_EMBEDDING_MODEL", defaultEmbeddingModel)
 	persona := readEnvOrDefault("BOT_PERSONA", defaultPersona)
 	conversationStorePath := readEnvOrDefault("CONVERSATION_STORE_PATH", defaultConversationStorePath)
 	testSuiteBaseDir := readEnvOrDefault("TEST_SUITE_BASE_DIR", defaultTestSuiteBaseDir)
+	embeddingBaseDir := readEnvOrDefault("EMBEDDING_BASE_DIR", defaultEmbeddingBaseDir)
+	qdrantBaseURL := readEnvOrDefault("QDRANT_BASE_URL", defaultQdrantBaseURL)
+	qdrantAPIKey := strings.TrimSpace(os.Getenv("QDRANT_API_KEY"))
+	qdrantCollectionPrefix := readEnvOrDefault("QDRANT_COLLECTION_PREFIX", defaultQdrantCollectionPrefix)
 	webAddr := readEnvOrDefault("WEB_ADDR", defaultWebAddr)
 
 	timeoutSec, err := readIntEnv("REQUEST_TIMEOUT_SECONDS", defaultRequestTimeoutSec)
@@ -55,23 +72,33 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	embeddingTimeoutSec, err := readIntEnv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", defaultEmbeddingTimeoutSec)
+	if err != nil {
+		return Config{}, err
+	}
 	telemetryCfg, err := loadTelemetryConfig()
 	if err != nil {
 		return Config{}, err
 	}
 
 	return Config{
-		DiscordBotToken:       token,
-		OllamaBaseURL:         strings.TrimRight(baseURL, "/"),
-		OllamaChatModel:       chatModel,
-		OllamaExtractModel:    extractModel,
-		Persona:               persona,
-		ConversationStorePath: filepath.Clean(conversationStorePath),
-		TestSuiteBaseDir:      filepath.Clean(testSuiteBaseDir),
-		WebAddr:               webAddr,
-		RequestTimeout:        time.Duration(timeoutSec) * time.Second,
-		TestSuiteTimeout:      time.Duration(testSuiteTimeoutSec) * time.Second,
-		Telemetry:             telemetryCfg,
+		DiscordBotToken:        token,
+		OllamaBaseURL:          strings.TrimRight(baseURL, "/"),
+		OllamaChatModel:        chatModel,
+		OllamaExtractModel:     extractModel,
+		OllamaEmbeddingModel:   embeddingModel,
+		Persona:                persona,
+		ConversationStorePath:  filepath.Clean(conversationStorePath),
+		TestSuiteBaseDir:       filepath.Clean(testSuiteBaseDir),
+		EmbeddingBaseDir:       filepath.Clean(embeddingBaseDir),
+		QdrantBaseURL:          strings.TrimRight(strings.TrimSpace(qdrantBaseURL), "/"),
+		QdrantAPIKey:           qdrantAPIKey,
+		QdrantCollectionPrefix: strings.TrimSpace(qdrantCollectionPrefix),
+		WebAddr:                webAddr,
+		RequestTimeout:         time.Duration(timeoutSec) * time.Second,
+		TestSuiteTimeout:       time.Duration(testSuiteTimeoutSec) * time.Second,
+		EmbeddingTimeout:       time.Duration(embeddingTimeoutSec) * time.Second,
+		Telemetry:              telemetryCfg,
 	}, nil
 }
 
@@ -82,7 +109,7 @@ func ValidateBotConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.ConversationStorePath) == "" || cfg.ConversationStorePath == "." {
 		return fmt.Errorf("conversation store path cannot be empty")
 	}
-	return validateLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.RequestTimeout)
+	return validateConversationLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.RequestTimeout)
 }
 
 func ValidateWebConfig(cfg Config) error {
@@ -92,7 +119,29 @@ func ValidateWebConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.TestSuiteBaseDir) == "" || cfg.TestSuiteBaseDir == "." {
 		return fmt.Errorf("test suite base dir cannot be empty")
 	}
-	return validateLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.TestSuiteTimeout)
+	return validateConversationLLMConfig(cfg.OllamaBaseURL, cfg.OllamaChatModel, cfg.OllamaExtractModel, cfg.Persona, cfg.TestSuiteTimeout)
+}
+
+func ValidateEmbeddingConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.EmbeddingBaseDir) == "" || cfg.EmbeddingBaseDir == "." {
+		return fmt.Errorf("embedding base dir cannot be empty")
+	}
+	if strings.TrimSpace(cfg.OllamaEmbeddingModel) == "" {
+		return fmt.Errorf("embedding model cannot be empty")
+	}
+	if err := validateBaseURL("ollama base url", cfg.OllamaBaseURL); err != nil {
+		return err
+	}
+	if err := validateBaseURL("qdrant base url", cfg.QdrantBaseURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.QdrantCollectionPrefix) == "" {
+		return fmt.Errorf("qdrant collection prefix cannot be empty")
+	}
+	if cfg.EmbeddingTimeout <= 0 {
+		return fmt.Errorf("embedding request timeout must be > 0")
+	}
+	return nil
 }
 
 func loadTelemetryConfig() (telemetry.Config, error) {
@@ -184,9 +233,9 @@ func readBoolEnv(name string, fallback bool) (bool, error) {
 	}
 }
 
-func validateLLMConfig(baseURL, chatModel, extractModel, persona string, timeout time.Duration) error {
-	if strings.TrimSpace(baseURL) == "" {
-		return fmt.Errorf("ollama base url cannot be empty")
+func validateConversationLLMConfig(baseURL, chatModel, extractModel, persona string, timeout time.Duration) error {
+	if err := validateBaseURL("ollama base url", baseURL); err != nil {
+		return err
 	}
 	if strings.TrimSpace(chatModel) == "" {
 		return fmt.Errorf("chat model cannot be empty")
@@ -199,6 +248,24 @@ func validateLLMConfig(baseURL, chatModel, extractModel, persona string, timeout
 	}
 	if timeout <= 0 {
 		return fmt.Errorf("request timeout must be > 0")
+	}
+	return nil
+}
+
+func validateBaseURL(label, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fmt.Errorf("%s cannot be empty", label)
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid %s %q: %w", label, raw, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("invalid %s %q: unsupported scheme", label, raw)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("invalid %s %q: host is required", label, raw)
 	}
 	return nil
 }

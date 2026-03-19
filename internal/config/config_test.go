@@ -11,12 +11,18 @@ func clearConfigEnv(t *testing.T) {
 		"OLLAMA_CHAT_MODEL",
 		"OLLAMA_MODEL",
 		"OLLAMA_EXTRACT_MODEL",
+		"OLLAMA_EMBEDDING_MODEL",
 		"BOT_PERSONA",
 		"CONVERSATION_STORE_PATH",
 		"TEST_SUITE_BASE_DIR",
+		"EMBEDDING_BASE_DIR",
+		"QDRANT_BASE_URL",
+		"QDRANT_API_KEY",
+		"QDRANT_COLLECTION_PREFIX",
 		"WEB_ADDR",
 		"REQUEST_TIMEOUT_SECONDS",
 		"TEST_SUITE_REQUEST_TIMEOUT_SECONDS",
+		"EMBEDDING_REQUEST_TIMEOUT_SECONDS",
 		"TELEMETRY_ENABLED",
 		"TELEMETRY_BASE_DIR",
 		"TELEMETRY_ENABLE_DISCORD_REPORTING",
@@ -52,6 +58,21 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 	if cfg.TestSuiteTimeout.Seconds() != 180 {
 		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
 	}
+	if cfg.EmbeddingBaseDir != "data/embedding-tests" {
+		t.Fatalf("EmbeddingBaseDir = %q", cfg.EmbeddingBaseDir)
+	}
+	if cfg.OllamaEmbeddingModel != "qwen3-embedding:4b" {
+		t.Fatalf("OllamaEmbeddingModel = %q", cfg.OllamaEmbeddingModel)
+	}
+	if cfg.QdrantBaseURL != "http://localhost:6333" {
+		t.Fatalf("QdrantBaseURL = %q", cfg.QdrantBaseURL)
+	}
+	if cfg.QdrantCollectionPrefix != "embedding-v1" {
+		t.Fatalf("QdrantCollectionPrefix = %q", cfg.QdrantCollectionPrefix)
+	}
+	if cfg.EmbeddingTimeout.Seconds() != 180 {
+		t.Fatalf("EmbeddingTimeout = %s", cfg.EmbeddingTimeout)
+	}
 	if cfg.Telemetry.BaseDir != "data/telemetry" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)
 	}
@@ -76,6 +97,12 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	t.Setenv("WEB_ADDR", "0.0.0.0:9000")
 	t.Setenv("CONVERSATION_STORE_PATH", "./tmp/conversations.json")
 	t.Setenv("TEST_SUITE_REQUEST_TIMEOUT_SECONDS", "240")
+	t.Setenv("EMBEDDING_BASE_DIR", "./tmp/embedding-tests")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("QDRANT_BASE_URL", "http://127.0.0.1:6334")
+	t.Setenv("QDRANT_API_KEY", "secret")
+	t.Setenv("QDRANT_COLLECTION_PREFIX", "memories")
+	t.Setenv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", "90")
 
 	cfg, err := Load()
 	if err != nil {
@@ -93,6 +120,24 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	}
 	if cfg.TestSuiteTimeout.Seconds() != 240 {
 		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
+	}
+	if cfg.EmbeddingBaseDir != "tmp/embedding-tests" {
+		t.Fatalf("EmbeddingBaseDir = %q", cfg.EmbeddingBaseDir)
+	}
+	if cfg.OllamaEmbeddingModel != "nomic-embed-text" {
+		t.Fatalf("OllamaEmbeddingModel = %q", cfg.OllamaEmbeddingModel)
+	}
+	if cfg.QdrantBaseURL != "http://127.0.0.1:6334" {
+		t.Fatalf("QdrantBaseURL = %q", cfg.QdrantBaseURL)
+	}
+	if cfg.QdrantAPIKey != "secret" {
+		t.Fatalf("QdrantAPIKey = %q", cfg.QdrantAPIKey)
+	}
+	if cfg.QdrantCollectionPrefix != "memories" {
+		t.Fatalf("QdrantCollectionPrefix = %q", cfg.QdrantCollectionPrefix)
+	}
+	if cfg.EmbeddingTimeout.Seconds() != 90 {
+		t.Fatalf("EmbeddingTimeout = %s", cfg.EmbeddingTimeout)
 	}
 	if cfg.Telemetry.BaseDir != "tmp/traces" {
 		t.Fatalf("Telemetry.BaseDir = %q", cfg.Telemetry.BaseDir)
@@ -158,5 +203,46 @@ func TestValidateWebConfigAcceptsLoadedConfigWithoutDiscordToken(t *testing.T) {
 	}
 	if err := ValidateWebConfig(cfg); err != nil {
 		t.Fatalf("ValidateWebConfig() error = %v", err)
+	}
+}
+
+func TestValidateEmbeddingConfigAcceptsLoadedConfig(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateEmbeddingConfig(cfg); err != nil {
+		t.Fatalf("ValidateEmbeddingConfig() error = %v", err)
+	}
+}
+
+func TestValidateEmbeddingConfigRejectsInvalidValues(t *testing.T) {
+	clearConfigEnv(t)
+	t.Setenv("QDRANT_BASE_URL", "not-a-url")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateEmbeddingConfig(cfg); err == nil {
+		t.Fatal("ValidateEmbeddingConfig() error = nil, want invalid qdrant url error")
+	}
+
+	clearConfigEnv(t)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.QdrantCollectionPrefix = " "
+	if err := ValidateEmbeddingConfig(cfg); err == nil {
+		t.Fatal("ValidateEmbeddingConfig() error = nil, want empty prefix error")
+	}
+
+	clearConfigEnv(t)
+	t.Setenv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want invalid embedding timeout error")
 	}
 }

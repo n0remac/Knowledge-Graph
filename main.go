@@ -15,6 +15,7 @@ import (
 
 	"github.com/n0remac/Knowledge-Graph/internal/config"
 	"github.com/n0remac/Knowledge-Graph/internal/discordbot"
+	"github.com/n0remac/Knowledge-Graph/internal/embeddingtest"
 	"github.com/n0remac/Knowledge-Graph/internal/testsuite"
 	webapp "github.com/n0remac/Knowledge-Graph/web"
 )
@@ -67,8 +68,29 @@ func run() error {
 		return fmt.Errorf("failed to initialize test suite service: %w", err)
 	}
 
+	var embeddingService *embeddingtest.Service
+	var embeddingServiceErr error
+	if err := config.ValidateEmbeddingConfig(cfg); err != nil {
+		embeddingServiceErr = err
+		log.Printf("embedding slice disabled: %v", err)
+	} else {
+		embeddingService, embeddingServiceErr = embeddingtest.NewService(embeddingtest.ServiceConfig{
+			BaseDir:                cfg.EmbeddingBaseDir,
+			OllamaBaseURL:          cfg.OllamaBaseURL,
+			RequestTimeout:         cfg.EmbeddingTimeout,
+			DefaultEmbeddingModel:  cfg.OllamaEmbeddingModel,
+			QdrantBaseURL:          cfg.QdrantBaseURL,
+			QdrantAPIKey:           cfg.QdrantAPIKey,
+			QdrantCollectionPrefix: cfg.QdrantCollectionPrefix,
+		})
+		if embeddingServiceErr != nil {
+			log.Printf("embedding slice disabled: %v", embeddingServiceErr)
+		}
+	}
+
 	mux := http.NewServeMux()
 	webapp.TestSuite(mux, testSuiteService)
+	webapp.Embeddings(mux, embeddingService, embeddingServiceErr)
 	if runtime != nil {
 		webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 	}

@@ -38,6 +38,23 @@ type ChatResult struct {
 	ResponseContent string      `json:"response_content"`
 }
 
+type EmbeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+type embeddingResponse struct {
+	Embedding  []float64   `json:"embedding"`
+	Embeddings [][]float64 `json:"embeddings"`
+}
+
+type EmbeddingResult struct {
+	Request         EmbeddingRequest `json:"request"`
+	RequestBodyJSON string           `json:"request_body_json"`
+	RawResponse     string           `json:"raw_response"`
+	Vector          []float64        `json:"vector"`
+}
+
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
@@ -100,5 +117,67 @@ func (c *Client) ChatDetailed(ctx context.Context, payload ChatRequest) (ChatRes
 	}
 
 	result.ResponseContent = parsed.Message.Content
+	return result, nil
+}
+
+func (c *Client) Embed(ctx context.Context, model, input string) ([]float64, error) {
+	result, err := c.EmbedDetailed(ctx, EmbeddingRequest{
+		Model: model,
+		Input: input,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.Vector, nil
+}
+
+func (c *Client) EmbedDetailed(ctx context.Context, payload EmbeddingRequest) (EmbeddingResult, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return EmbeddingResult{}, fmt.Errorf("marshal embedding payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/embed", bytes.NewReader(body))
+	if err != nil {
+		return EmbeddingResult{}, fmt.Errorf("create embedding request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	result := EmbeddingResult{
+		Request:         payload,
+		RequestBodyJSON: string(body),
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return result, fmt.Errorf("ollama embedding request failed: %w", err)
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return result, fmt.Errorf("read embedding response: %w", err)
+	}
+	result.RawResponse = string(respBody)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return result, fmt.Errorf("ollama status %d: %s", resp.StatusCode, strings.TrimSpace(result.RawResponse))
+	}
+
+	var parsed embeddingResponse
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return result, fmt.Errorf("decode embedding response: %w", err)
+	}
+
+	switch {
+	case len(parsed.Embedding) > 0:
+		result.Vector = append([]float64(nil), parsed.Embedding...)
+	case len(parsed.Embeddings) > 0 && len(parsed.Embeddings[0]) > 0:
+		result.Vector = append([]float64(nil), parsed.Embeddings[0]...)
+	default:
+		return result, fmt.Errorf("embedding response did not include a vector")
+	}
 	return result, nil
 }
