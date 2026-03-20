@@ -14,6 +14,8 @@ func clearConfigEnv(t *testing.T) {
 		"OLLAMA_EMBEDDING_MODEL",
 		"BOT_PERSONA",
 		"CONVERSATION_STORE_PATH",
+		"MEMORY_OBSERVE_CHANNEL_ID",
+		"MEMORY_STORE_PATH",
 		"TEST_SUITE_BASE_DIR",
 		"EMBEDDING_BASE_DIR",
 		"QDRANT_BASE_URL",
@@ -54,6 +56,12 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 	}
 	if cfg.ConversationStorePath != "data/conversation-state.json" {
 		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
+	}
+	if cfg.MemoryObserveChannelID != "" {
+		t.Fatalf("MemoryObserveChannelID = %q, want empty", cfg.MemoryObserveChannelID)
+	}
+	if cfg.MemoryStorePath != "data/memory.db" {
+		t.Fatalf("MemoryStorePath = %q", cfg.MemoryStorePath)
 	}
 	if cfg.TestSuiteTimeout.Seconds() != 180 {
 		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
@@ -96,6 +104,8 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	t.Setenv("TELEMETRY_WRITE_RUNTIME_EVENTS", "false")
 	t.Setenv("WEB_ADDR", "0.0.0.0:9000")
 	t.Setenv("CONVERSATION_STORE_PATH", "./tmp/conversations.json")
+	t.Setenv("MEMORY_OBSERVE_CHANNEL_ID", "channel-123")
+	t.Setenv("MEMORY_STORE_PATH", "./tmp/memory.sqlite")
 	t.Setenv("TEST_SUITE_REQUEST_TIMEOUT_SECONDS", "240")
 	t.Setenv("EMBEDDING_BASE_DIR", "./tmp/embedding-tests")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
@@ -117,6 +127,12 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	}
 	if cfg.ConversationStorePath != "tmp/conversations.json" {
 		t.Fatalf("ConversationStorePath = %q", cfg.ConversationStorePath)
+	}
+	if cfg.MemoryObserveChannelID != "channel-123" {
+		t.Fatalf("MemoryObserveChannelID = %q", cfg.MemoryObserveChannelID)
+	}
+	if cfg.MemoryStorePath != "tmp/memory.sqlite" {
+		t.Fatalf("MemoryStorePath = %q", cfg.MemoryStorePath)
 	}
 	if cfg.TestSuiteTimeout.Seconds() != 240 {
 		t.Fatalf("TestSuiteTimeout = %s", cfg.TestSuiteTimeout)
@@ -244,5 +260,32 @@ func TestValidateEmbeddingConfigRejectsInvalidValues(t *testing.T) {
 	t.Setenv("EMBEDDING_REQUEST_TIMEOUT_SECONDS", "0")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want invalid embedding timeout error")
+	}
+}
+
+func TestValidateMemoryCollectorConfig(t *testing.T) {
+	clearConfigEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if err := ValidateMemoryCollectorConfig(cfg); err != nil {
+		t.Fatalf("ValidateMemoryCollectorConfig(defaults) error = %v", err)
+	}
+
+	cfg.MemoryStorePath = "."
+	if err := ValidateMemoryCollectorConfig(cfg); err == nil {
+		t.Fatal("ValidateMemoryCollectorConfig() error = nil, want empty path error")
+	}
+
+	clearConfigEnv(t)
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cfg.QdrantBaseURL = "://bad-url"
+	if err := ValidateMemoryCollectorConfig(cfg); err == nil {
+		t.Fatal("ValidateMemoryCollectorConfig() error = nil, want invalid qdrant url error")
 	}
 }

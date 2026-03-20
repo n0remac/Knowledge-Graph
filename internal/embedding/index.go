@@ -9,7 +9,6 @@ import (
 	"hash/fnv"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,16 +31,17 @@ type Index struct {
 }
 
 type Document struct {
-	MessageSetID string
-	MessageIndex int
-	MessageText  string
+	DocumentID string
+	Text       string
+	Payload    map[string]any
 }
 
 type SearchResult struct {
-	Rank         int     `json:"rank"`
-	Score        float64 `json:"score"`
-	MessageIndex int     `json:"message_index"`
-	MessageText  string  `json:"message_text"`
+	Rank       int            `json:"rank"`
+	Score      float64        `json:"score"`
+	DocumentID string         `json:"document_id"`
+	Text       string         `json:"text"`
+	Payload    map[string]any `json:"payload,omitempty"`
 }
 
 type SearchResponse struct {
@@ -78,7 +78,7 @@ func (i *Index) CollectionName(model string) string {
 	return i.collectionPrefix + "-" + sanitizeCollectionPart(model)
 }
 
-func (i *Index) IndexMessages(ctx context.Context, model string, docs []Document) (string, error) {
+func (i *Index) UpsertDocuments(ctx context.Context, model string, docs []Document) (string, error) {
 	if i == nil || i.ollama == nil || i.qdrant == nil {
 		return "", fmt.Errorf("embedding index is not initialized")
 	}
@@ -94,12 +94,12 @@ func (i *Index) IndexMessages(ctx context.Context, model string, docs []Document
 
 	vectors := make([][]float64, 0, len(normalized))
 	for _, doc := range normalized {
-		vector, err := i.ollama.Embed(ctx, model, doc.MessageText)
+		vector, err := i.ollama.Embed(ctx, model, doc.Text)
 		if err != nil {
-			return "", fmt.Errorf("embed message %d: %w", doc.MessageIndex, err)
+			return "", fmt.Errorf("embed document %q: %w", doc.DocumentID, err)
 		}
 		if len(vector) == 0 {
-			return "", fmt.Errorf("embed message %d: empty embedding vector", doc.MessageIndex)
+			return "", fmt.Errorf("embed document %q: empty embedding vector", doc.DocumentID)
 		}
 		vectors = append(vectors, vector)
 	}
@@ -111,14 +111,13 @@ func (i *Index) IndexMessages(ctx context.Context, model string, docs []Document
 
 	points := make([]qdrantPoint, 0, len(normalized))
 	for idx, doc := range normalized {
+		payload := clonePayload(doc.Payload)
+		payload["document_id"] = doc.DocumentID
+		payload["text"] = doc.Text
 		points = append(points, qdrantPoint{
-			ID:     pointID(doc.MessageSetID, doc.MessageIndex),
-			Vector: vectors[idx],
-			Payload: map[string]any{
-				"message_set_id": doc.MessageSetID,
-				"message_index":  doc.MessageIndex,
-				"message_text":   doc.MessageText,
-			},
+			ID:      pointID(doc.DocumentID),
+			Vector:  vectors[idx],
+			Payload: payload,
 		})
 	}
 	if err := i.qdrant.upsertPoints(ctx, collectionName, points); err != nil {
@@ -127,19 +126,15 @@ func (i *Index) IndexMessages(ctx context.Context, model string, docs []Document
 	return collectionName, nil
 }
 
-func (i *Index) Search(ctx context.Context, model, messageSetID, query string, topK int) (SearchResponse, error) {
+func (i *Index) Search(ctx context.Context, model, query string, topK int, filters map[string]string) (SearchResponse, error) {
 	if i == nil || i.ollama == nil || i.qdrant == nil {
 		return SearchResponse{}, fmt.Errorf("embedding index is not initialized")
 	}
 
 	model = strings.TrimSpace(model)
-	messageSetID = strings.TrimSpace(messageSetID)
 	query = strings.TrimSpace(query)
 	if model == "" {
 		return SearchResponse{}, fmt.Errorf("embedding model cannot be empty")
-	}
-	if messageSetID == "" {
-		return SearchResponse{}, fmt.Errorf("message set id cannot be empty")
 	}
 	if query == "" {
 		return SearchResponse{}, fmt.Errorf("query cannot be empty")
@@ -154,7 +149,7 @@ func (i *Index) Search(ctx context.Context, model, messageSetID, query string, t
 	}
 
 	collectionName := i.CollectionName(model)
-	hits, err := i.qdrant.searchPoints(ctx, collectionName, messageSetID, vector, topK)
+	hits, err := i.qdrant.searchPoints(ctx, collectionName, vector, topK, filters)
 	if err != nil {
 		return SearchResponse{}, err
 	}
@@ -165,10 +160,11 @@ func (i *Index) Search(ctx context.Context, model, messageSetID, query string, t
 	}
 	for idx, hit := range hits {
 		response.Results = append(response.Results, SearchResult{
-			Rank:         idx + 1,
-			Score:        hit.Score,
-			MessageIndex: hit.MessageIndex,
-			MessageText:  hit.MessageText,
+			Rank:       idx + 1,
+			Score:      hit.Score,
+			DocumentID: hit.DocumentID,
+			Text:       hit.Text,
+			Payload:    clonePayload(hit.Payload),
 		})
 	}
 	return response, nil
@@ -181,17 +177,15 @@ func normalizeDocuments(docs []Document) ([]Document, error) {
 
 	out := make([]Document, 0, len(docs))
 	for _, doc := range docs {
-		doc.MessageSetID = strings.TrimSpace(doc.MessageSetID)
-		doc.MessageText = strings.TrimSpace(doc.MessageText)
-		if doc.MessageSetID == "" {
-			return nil, fmt.Errorf("message set id cannot be empty")
+		doc.DocumentID = strings.TrimSpace(doc.DocumentID)
+		doc.Text = strings.TrimSpace(doc.Text)
+		if doc.DocumentID == "" {
+			return nil, fmt.Errorf("document id cannot be empty")
 		}
-		if doc.MessageText == "" {
-			return nil, fmt.Errorf("messages cannot contain empty text")
+		if doc.Text == "" {
+			return nil, fmt.Errorf("documents cannot contain empty text")
 		}
-		if doc.MessageIndex < 0 {
-			return nil, fmt.Errorf("message index cannot be negative")
-		}
+		doc.Payload = clonePayload(doc.Payload)
 		out = append(out, doc)
 	}
 	return out, nil
@@ -228,11 +222,9 @@ func sanitizeCollectionPart(input string) string {
 	return value
 }
 
-func pointID(messageSetID string, messageIndex int) uint64 {
+func pointID(documentID string) uint64 {
 	hasher := fnv.New64a()
-	_, _ = hasher.Write([]byte(messageSetID))
-	_, _ = hasher.Write([]byte{':'})
-	_, _ = hasher.Write([]byte(strconv.Itoa(messageIndex)))
+	_, _ = hasher.Write([]byte(documentID))
 	return hasher.Sum64()
 }
 
@@ -249,9 +241,10 @@ type qdrantPoint struct {
 }
 
 type qdrantSearchHit struct {
-	Score        float64
-	MessageIndex int
-	MessageText  string
+	Score      float64
+	DocumentID string
+	Text       string
+	Payload    map[string]any
 }
 
 func (c *qdrantClient) ensureCollection(ctx context.Context, collectionName string, vectorSize int) error {
@@ -379,22 +372,32 @@ func (c *qdrantClient) upsertPoints(ctx context.Context, collectionName string, 
 	return nil
 }
 
-func (c *qdrantClient) searchPoints(ctx context.Context, collectionName, messageSetID string, vector []float64, topK int) ([]qdrantSearchHit, error) {
-	resp, err := c.do(ctx, http.MethodPost, "/collections/"+collectionName+"/points/search", map[string]any{
+func (c *qdrantClient) searchPoints(ctx context.Context, collectionName string, vector []float64, topK int, filters map[string]string) ([]qdrantSearchHit, error) {
+	payload := map[string]any{
 		"vector":       vector,
 		"limit":        topK,
 		"with_payload": true,
-		"filter": map[string]any{
-			"must": []map[string]any{
-				{
-					"key": "message_set_id",
-					"match": map[string]any{
-						"value": messageSetID,
-					},
+	}
+	if len(filters) > 0 {
+		must := make([]map[string]any, 0, len(filters))
+		for key, value := range filters {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
+			if key == "" || value == "" {
+				continue
+			}
+			must = append(must, map[string]any{
+				"key": key,
+				"match": map[string]any{
+					"value": value,
 				},
-			},
-		},
-	})
+			})
+		}
+		if len(must) > 0 {
+			payload["filter"] = map[string]any{"must": must}
+		}
+	}
+	resp, err := c.do(ctx, http.MethodPost, "/collections/"+collectionName+"/points/search", payload)
 	if err != nil {
 		return nil, err
 	}
@@ -422,21 +425,27 @@ func (c *qdrantClient) searchPoints(ctx context.Context, collectionName, message
 
 	out := make([]qdrantSearchHit, 0, len(parsed.Result))
 	for _, item := range parsed.Result {
-		indexValue := 0
-		switch value := item.Payload["message_index"].(type) {
-		case float64:
-			indexValue = int(value)
-		case int:
-			indexValue = value
-		}
-		textValue, _ := item.Payload["message_text"].(string)
+		documentID, _ := item.Payload["document_id"].(string)
+		textValue, _ := item.Payload["text"].(string)
 		out = append(out, qdrantSearchHit{
-			Score:        item.Score,
-			MessageIndex: indexValue,
-			MessageText:  textValue,
+			Score:      item.Score,
+			DocumentID: documentID,
+			Text:       textValue,
+			Payload:    clonePayload(item.Payload),
 		})
 	}
 	return out, nil
+}
+
+func clonePayload(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return make(map[string]any)
+	}
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func (c *qdrantClient) do(ctx context.Context, method, path string, payload any) (*http.Response, error) {

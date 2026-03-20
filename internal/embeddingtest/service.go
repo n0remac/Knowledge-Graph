@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
 	"github.com/n0remac/Knowledge-Graph/internal/embedding"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
 )
@@ -33,8 +35,9 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	cfg   ServiceConfig
-	index *embedding.Index
+	cfg      ServiceConfig
+	index    *embedding.Index
+	notifier *adminstream.Notifier
 }
 
 func NewService(cfg ServiceConfig) (*Service, error) {
@@ -78,6 +81,13 @@ func NewService(cfg ServiceConfig) (*Service, error) {
 	}
 
 	return &Service{cfg: cfg, index: index}, nil
+}
+
+func (s *Service) SetNotifier(notifier *adminstream.Notifier) {
+	if s == nil {
+		return
+	}
+	s.notifier = notifier
 }
 
 func (s *Service) Defaults() Defaults {
@@ -207,6 +217,7 @@ func (s *Service) SaveMessageSet(input MessageSet) (MessageSet, error) {
 	if err := writeJSONAtomic(s.messageSetPath(set.ID), set); err != nil {
 		return MessageSet{}, fmt.Errorf("write message set: %w", err)
 	}
+	s.publishChange()
 	return set, nil
 }
 
@@ -225,6 +236,7 @@ func (s *Service) DeleteMessageSet(id string) error {
 		}
 		return fmt.Errorf("delete message set: %w", err)
 	}
+	s.publishChange()
 	return nil
 }
 
@@ -262,23 +274,27 @@ func (s *Service) RunQuery(ctx context.Context, request RunRequest) (RunRecord, 
 	docs := make([]embedding.Document, 0, len(set.Messages))
 	for idx, message := range set.Messages {
 		docs = append(docs, embedding.Document{
-			MessageSetID: set.ID,
-			MessageIndex: idx,
-			MessageText:  message.Text,
+			DocumentID: set.ID + ":" + sanitizeID(strconv.Itoa(idx)),
+			Text:       message.Text,
+			Payload: map[string]any{
+				"message_set_id": set.ID,
+				"message_index":  idx,
+			},
 		})
 	}
 
-	if _, err := s.index.IndexMessages(ctx, req.EmbeddingModel, docs); err != nil {
+	if _, err := s.index.UpsertDocuments(ctx, req.EmbeddingModel, docs); err != nil {
 		record.Status = "failed"
 		record.CompletedAtUnixMs = time.Now().UTC().UnixMilli()
 		record.Error = err.Error()
 		if writeErr := s.writeRunRecord(record); writeErr != nil {
 			return RunRecord{}, writeErr
 		}
+		s.publishChange()
 		return record, nil
 	}
 
-	searchResult, err := s.index.Search(ctx, req.EmbeddingModel, set.ID, req.Query, req.TopK)
+	searchResult, err := s.index.Search(ctx, req.EmbeddingModel, req.Query, req.TopK, map[string]string{"message_set_id": set.ID})
 	if err != nil {
 		record.Status = "failed"
 		record.CompletedAtUnixMs = time.Now().UTC().UnixMilli()
@@ -286,17 +302,25 @@ func (s *Service) RunQuery(ctx context.Context, request RunRequest) (RunRecord, 
 		if writeErr := s.writeRunRecord(record); writeErr != nil {
 			return RunRecord{}, writeErr
 		}
+		s.publishChange()
 		return record, nil
 	}
 
 	record.CollectionName = searchResult.CollectionName
 	record.Results = make([]SearchResult, 0, len(searchResult.Results))
 	for _, item := range searchResult.Results {
+		messageIndex := 0
+		switch value := item.Payload["message_index"].(type) {
+		case float64:
+			messageIndex = int(value)
+		case int:
+			messageIndex = value
+		}
 		record.Results = append(record.Results, SearchResult{
 			Rank:         item.Rank,
 			Score:        item.Score,
-			MessageIndex: item.MessageIndex,
-			MessageText:  item.MessageText,
+			MessageIndex: messageIndex,
+			MessageText:  item.Text,
 		})
 	}
 	record.Status = "completed"
@@ -305,6 +329,7 @@ func (s *Service) RunQuery(ctx context.Context, request RunRequest) (RunRecord, 
 	if err := s.writeRunRecord(record); err != nil {
 		return RunRecord{}, err
 	}
+	s.publishChange()
 	return record, nil
 }
 
@@ -399,6 +424,13 @@ func (s *Service) prepareRunRequest(request RunRequest) (RunRequest, MessageSet,
 		return RunRequest{}, MessageSet{}, fmt.Errorf("top_k must be between 1 and %d", maxTopK)
 	}
 	return req, set, nil
+}
+
+func (s *Service) publishChange() {
+	if s == nil || s.notifier == nil {
+		return
+	}
+	s.notifier.Publish(adminstream.VerticalEmbeddings)
 }
 
 func sanitizeMessageSet(input MessageSet) (MessageSet, error) {

@@ -11,9 +11,13 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
+	"github.com/n0remac/Knowledge-Graph/internal/claimextract"
 	"github.com/n0remac/Knowledge-Graph/internal/config"
 	"github.com/n0remac/Knowledge-Graph/internal/conversation"
+	"github.com/n0remac/Knowledge-Graph/internal/embedding"
 	"github.com/n0remac/Knowledge-Graph/internal/generate"
+	"github.com/n0remac/Knowledge-Graph/internal/memory"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
 	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
@@ -22,18 +26,21 @@ import (
 const (
 	maxDiscordReplyRunes = 2000
 	botTestingChannel    = "bot-testing"
+	memoryChannelName    = "general"
 )
 
 type Runtime struct {
 	cfg               config.Config
 	conversationStore *conversation.Store
+	memoryStore       *memory.Store
 	engine            *conversation.Engine
+	memoryCollector   *memory.Collector
 	generator         *generate.Generator
 	session           *discordgo.Session
 	telemetry         *telemetry.Manager
 }
 
-func NewRuntime(cfg config.Config) (*Runtime, error) {
+func NewRuntime(cfg config.Config, notifier *adminstream.Notifier) (*Runtime, error) {
 	if err := config.ValidateBotConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -54,15 +61,54 @@ func NewRuntime(cfg config.Config) (*Runtime, error) {
 		_ = manager.Close()
 		return nil, err
 	}
+	conversationStore.SetNotifier(notifier)
 
 	llmClient := ollama.NewClient(cfg.OllamaBaseURL, cfg.RequestTimeout)
 	engine := conversation.NewEngine(conversationStore, llmClient, cfg.OllamaExtractModel, cfg.RequestTimeout, manager)
 	generator := generate.NewGenerator(llmClient, cfg.OllamaChatModel, cfg.Persona, manager)
 
+	var memoryStore *memory.Store
+	var memoryCollector *memory.Collector
+	if err := config.ValidateMemoryCollectorConfig(cfg); err != nil {
+		_ = conversationStore.Close()
+		_ = manager.Close()
+		return nil, err
+	}
+	{
+		memoryStore, err = memory.NewStore(cfg.MemoryStorePath, manager)
+		if err != nil {
+			_ = conversationStore.Close()
+			_ = manager.Close()
+			return nil, err
+		}
+		memoryStore.SetNotifier(notifier)
+		embeddingIndex, err := embedding.New(ollama.NewClient(cfg.OllamaBaseURL, cfg.EmbeddingTimeout), embedding.Config{
+			QdrantBaseURL:    cfg.QdrantBaseURL,
+			QdrantAPIKey:     cfg.QdrantAPIKey,
+			CollectionPrefix: cfg.QdrantCollectionPrefix,
+			RequestTimeout:   cfg.EmbeddingTimeout,
+		})
+		if err != nil {
+			_ = memoryStore.Close()
+			_ = conversationStore.Close()
+			_ = manager.Close()
+			return nil, err
+		}
+		memoryCollector = memory.NewCollector(
+			memoryStore,
+			claimextract.New(llmClient, cfg.OllamaExtractModel, telemetry.StageMemory, manager),
+			embeddingIndex,
+			cfg.OllamaEmbeddingModel,
+			manager,
+		)
+	}
+
 	runtime := &Runtime{
 		cfg:               cfg,
 		conversationStore: conversationStore,
+		memoryStore:       memoryStore,
 		engine:            engine,
+		memoryCollector:   memoryCollector,
 		generator:         generator,
 		session:           session,
 		telemetry:         manager,
@@ -112,6 +158,11 @@ func (r *Runtime) Close() error {
 			return err
 		}
 	}
+	if r.memoryStore != nil {
+		if err := r.memoryStore.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -126,9 +177,6 @@ func (r *Runtime) onReady(_ *discordgo.Session, ready *discordgo.Ready) {
 
 func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.MessageCreate) {
 	if event.Author == nil || event.Author.Bot {
-		return
-	}
-	if !isBotTestingChannel(session, event.ChannelID) {
 		return
 	}
 
@@ -188,6 +236,20 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 		}
 	}
 
+	if r.shouldObserveMemoryChannel(session, event.ChannelID) && r.memoryCollector != nil {
+		if err := r.memoryCollector.IngestMessage(ctx, message, memory.CollectOptions{ReplyTarget: replyTarget}); err != nil {
+			log.Printf("event=memory_ingest_error message_id=%q err=%q", message.MessageID, err.Error())
+			r.emitError(ctx, telemetry.StageRuntime, "memory_ingest_error", "failed to ingest message into passive memory collector", err, map[string]any{
+				"message_id":      message.MessageID,
+				"conversation_id": message.ConversationID,
+			})
+		}
+	}
+
+	if !isBotTestingChannel(session, event.ChannelID) {
+		return
+	}
+
 	result, err := r.engine.ProcessMessage(ctx, message, conversation.ProcessOptions{ReplyTarget: replyTarget})
 	if err != nil {
 		log.Printf("event=conversation_process_error message_id=%q err=%q", message.MessageID, err.Error())
@@ -244,6 +306,24 @@ func (r *Runtime) onMessageCreate(session *discordgo.Session, event *discordgo.M
 	})
 
 	r.ingestAssistantReply(message, result.Message, sentMessage)
+}
+
+func (r *Runtime) shouldObserveMemoryChannel(session *discordgo.Session, channelID string) bool {
+	if r == nil {
+		return false
+	}
+	channelID = strings.TrimSpace(channelID)
+	if channelID == "" {
+		return false
+	}
+	if configuredID := strings.TrimSpace(r.cfg.MemoryObserveChannelID); configuredID != "" {
+		return channelID == configuredID
+	}
+	channel := getChannel(session, channelID)
+	if channel == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(channel.Name), memoryChannelName)
 }
 
 func (r *Runtime) ingestAssistantReply(source models.RawMessage, replyTarget models.RawMessage, sent *discordgo.Message) {

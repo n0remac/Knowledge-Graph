@@ -13,9 +13,14 @@ import (
 	"syscall"
 	"time"
 
+	godomws "github.com/n0remac/GoDom/websocket"
+
+	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
 	"github.com/n0remac/Knowledge-Graph/internal/config"
+	"github.com/n0remac/Knowledge-Graph/internal/conversation"
 	"github.com/n0remac/Knowledge-Graph/internal/discordbot"
 	"github.com/n0remac/Knowledge-Graph/internal/embeddingtest"
+	"github.com/n0remac/Knowledge-Graph/internal/memory"
 	"github.com/n0remac/Knowledge-Graph/internal/testsuite"
 	webapp "github.com/n0remac/Knowledge-Graph/web"
 )
@@ -35,12 +40,16 @@ func run() error {
 		return fmt.Errorf("web configuration error: %w", err)
 	}
 
+	notifier := adminstream.NewNotifier()
+	websocketRegistry := godomws.NewCommandRegistry()
+	go godomws.WsHub.Run()
+
 	var runtime *discordbot.Runtime
 	if strings.TrimSpace(cfg.DiscordBotToken) != "" {
 		if err := config.ValidateBotConfig(cfg); err != nil {
 			return fmt.Errorf("bot configuration error: %w", err)
 		}
-		runtime, err = discordbot.NewRuntime(cfg)
+		runtime, err = discordbot.NewRuntime(cfg, notifier)
 		if err != nil {
 			return fmt.Errorf("failed to initialize bot runtime: %w", err)
 		}
@@ -85,15 +94,35 @@ func run() error {
 		})
 		if embeddingServiceErr != nil {
 			log.Printf("embedding slice disabled: %v", embeddingServiceErr)
+		} else {
+			embeddingService.SetNotifier(notifier)
 		}
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/ws/hub", godomws.CreateWebsocket(websocketRegistry))
 	webapp.TestSuite(mux, testSuiteService)
 	webapp.Embeddings(mux, embeddingService, embeddingServiceErr)
 	if runtime != nil {
 		webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 	}
+	webapp.Admin(mux, webapp.AdminDependencies{
+		ConversationStore: func() *conversation.Store {
+			if runtime == nil {
+				return nil
+			}
+			return runtime.ConversationStore()
+		}(),
+		MemoryStore: func() *memory.Store {
+			if runtime == nil {
+				return nil
+			}
+			return runtime.MemoryStore()
+		}(),
+		EmbeddingService: embeddingService,
+		EmbeddingInitErr: embeddingServiceErr,
+		Notifier:         notifier,
+	})
 
 	listener, err := net.Listen("tcp", cfg.WebAddr)
 	if err != nil {

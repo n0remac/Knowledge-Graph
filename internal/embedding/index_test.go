@@ -34,15 +34,15 @@ func TestIndexSearchAndFilter(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := index.IndexMessages(ctx, "nomic-embed-text", []Document{
-		{MessageSetID: "set-a", MessageIndex: 0, MessageText: "alpha"},
-		{MessageSetID: "set-a", MessageIndex: 1, MessageText: "beta"},
-		{MessageSetID: "set-b", MessageIndex: 0, MessageText: "gamma"},
+	if _, err := index.UpsertDocuments(ctx, "nomic-embed-text", []Document{
+		{DocumentID: "set-a:0", Text: "alpha", Payload: map[string]any{"message_set_id": "set-a", "message_index": 0}},
+		{DocumentID: "set-a:1", Text: "beta", Payload: map[string]any{"message_set_id": "set-a", "message_index": 1}},
+		{DocumentID: "set-b:0", Text: "gamma", Payload: map[string]any{"message_set_id": "set-b", "message_index": 0}},
 	}); err != nil {
-		t.Fatalf("IndexMessages() error = %v", err)
+		t.Fatalf("UpsertDocuments() error = %v", err)
 	}
 
-	result, err := index.Search(ctx, "nomic-embed-text", "set-a", "find alpha", 2)
+	result, err := index.Search(ctx, "nomic-embed-text", "find alpha", 2, map[string]string{"message_set_id": "set-a"})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
@@ -52,11 +52,11 @@ func TestIndexSearchAndFilter(t *testing.T) {
 	if len(result.Results) != 2 {
 		t.Fatalf("len(result.Results) = %d, want 2", len(result.Results))
 	}
-	if result.Results[0].MessageText != "alpha" {
+	if result.Results[0].Text != "alpha" {
 		t.Fatalf("first result = %#v, want alpha first", result.Results[0])
 	}
 	for _, item := range result.Results {
-		if item.MessageText == "gamma" {
+		if item.Text == "gamma" {
 			t.Fatalf("Search() returned message from a different message set: %#v", item)
 		}
 	}
@@ -81,17 +81,17 @@ func TestIndexMessagesUpsertsDeterministically(t *testing.T) {
 
 	ctx := context.Background()
 	docs := []Document{
-		{MessageSetID: "set-a", MessageIndex: 0, MessageText: "alpha"},
-		{MessageSetID: "set-a", MessageIndex: 1, MessageText: "beta"},
+		{DocumentID: "set-a:0", Text: "alpha", Payload: map[string]any{"message_set_id": "set-a", "message_index": 0}},
+		{DocumentID: "set-a:1", Text: "beta", Payload: map[string]any{"message_set_id": "set-a", "message_index": 1}},
 	}
-	if _, err := index.IndexMessages(ctx, "nomic-embed-text", docs); err != nil {
-		t.Fatalf("IndexMessages(first) error = %v", err)
+	if _, err := index.UpsertDocuments(ctx, "nomic-embed-text", docs); err != nil {
+		t.Fatalf("UpsertDocuments(first) error = %v", err)
 	}
-	if _, err := index.IndexMessages(ctx, "nomic-embed-text", []Document{
-		{MessageSetID: "set-a", MessageIndex: 0, MessageText: "alpha revised"},
-		{MessageSetID: "set-a", MessageIndex: 1, MessageText: "beta"},
+	if _, err := index.UpsertDocuments(ctx, "nomic-embed-text", []Document{
+		{DocumentID: "set-a:0", Text: "alpha revised", Payload: map[string]any{"message_set_id": "set-a", "message_index": 0}},
+		{DocumentID: "set-a:1", Text: "beta", Payload: map[string]any{"message_set_id": "set-a", "message_index": 1}},
 	}); err != nil {
-		t.Fatalf("IndexMessages(second) error = %v", err)
+		t.Fatalf("UpsertDocuments(second) error = %v", err)
 	}
 
 	collection := qdrant.collection("embedding-v1-nomic-embed-text")
@@ -99,11 +99,11 @@ func TestIndexMessagesUpsertsDeterministically(t *testing.T) {
 		t.Fatalf("len(points) = %d, want 2 after deterministic upsert", len(collection.points))
 	}
 
-	result, err := index.Search(ctx, "nomic-embed-text", "set-a", "find alpha", 2)
+	result, err := index.Search(ctx, "nomic-embed-text", "find alpha", 2, map[string]string{"message_set_id": "set-a"})
 	if err != nil {
 		t.Fatalf("Search() error = %v", err)
 	}
-	if result.Results[0].MessageText != "alpha revised" {
+	if result.Results[0].Text != "alpha revised" {
 		t.Fatalf("first result = %#v, want revised payload", result.Results[0])
 	}
 }
@@ -129,10 +129,10 @@ func TestIndexMessagesRejectsIncompatibleCollection(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	if _, err := index.IndexMessages(context.Background(), "nomic-embed-text", []Document{
-		{MessageSetID: "set-a", MessageIndex: 0, MessageText: "alpha"},
+	if _, err := index.UpsertDocuments(context.Background(), "nomic-embed-text", []Document{
+		{DocumentID: "set-a:0", Text: "alpha", Payload: map[string]any{"message_set_id": "set-a", "message_index": 0}},
 	}); err == nil || !strings.Contains(err.Error(), "vector size") {
-		t.Fatalf("IndexMessages() error = %v, want vector size mismatch", err)
+		t.Fatalf("UpsertDocuments() error = %v, want vector size mismatch", err)
 	}
 }
 
@@ -316,9 +316,9 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	messageSetID := ""
-	if len(payload.Filter.Must) > 0 {
-		messageSetID = payload.Filter.Must[0].Match.Value
+	filters := make(map[string]string, len(payload.Filter.Must))
+	for _, match := range payload.Filter.Must {
+		filters[match.Key] = match.Match.Value
 	}
 
 	s.mu.Lock()
@@ -335,7 +335,7 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 	}
 	hits := make([]hit, 0, len(collection.points))
 	for _, point := range collection.points {
-		if fmt.Sprint(point.Payload["message_set_id"]) != messageSetID {
+		if !payloadMatches(point.Payload, filters) {
 			continue
 		}
 		hits = append(hits, hit{
@@ -352,6 +352,15 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 		hits = hits[:payload.Limit]
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"result": hits})
+}
+
+func payloadMatches(payload map[string]any, filters map[string]string) bool {
+	for key, value := range filters {
+		if fmt.Sprint(payload[key]) != value {
+			return false
+		}
+	}
+	return true
 }
 
 func cosine(a, b []float64) float64 {

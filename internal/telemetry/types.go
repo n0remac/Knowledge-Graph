@@ -11,6 +11,7 @@ const (
 	StageConversation = "conversation"
 	StageStore        = "store"
 	StageGeneration   = "generation"
+	StageMemory       = "memory"
 	StageDiscordDebug = "discord_debug"
 
 	defaultBaseDir            = "data/telemetry"

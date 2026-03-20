@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
 )
@@ -18,6 +19,7 @@ type Store struct {
 	mu        sync.RWMutex
 	data      storeData
 	telemetry *telemetry.Manager
+	notifier  *adminstream.Notifier
 }
 
 type storeData struct {
@@ -59,6 +61,13 @@ func (s *Store) Flush() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.persistLocked()
+}
+
+func (s *Store) SetNotifier(notifier *adminstream.Notifier) {
+	if s == nil {
+		return
+	}
+	s.notifier = notifier
 }
 
 func (s *Store) SaveRawMessage(ctx context.Context, input models.RawMessage) (models.RawMessage, error) {
@@ -112,6 +121,7 @@ func (s *Store) SaveRawMessage(ctx context.Context, input models.RawMessage) (mo
 		"created":            true,
 		"conversation_count": count,
 	})
+	s.publishChange()
 	return msg, nil
 }
 
@@ -199,6 +209,7 @@ func (s *Store) SaveMessageExtraction(ctx context.Context, input models.MessageE
 		"input":  input,
 		"output": extraction,
 	})
+	s.publishChange()
 	return extraction, nil
 }
 
@@ -264,6 +275,7 @@ func (s *Store) SaveWorkingState(ctx context.Context, input models.WorkingState)
 		"input":  input,
 		"output": state,
 	})
+	s.publishChange()
 	return state, nil
 }
 
@@ -300,6 +312,7 @@ func (s *Store) SaveResponseContext(ctx context.Context, input models.ResponseCo
 		"input":  input,
 		"output": artifact,
 	})
+	s.publishChange()
 	return artifact, nil
 }
 
@@ -487,4 +500,11 @@ func (s *Store) emitError(ctx context.Context, kind, summary string, err error, 
 		payload["error"] = err.Error()
 	}
 	s.emit(ctx, kind, summary, payload)
+}
+
+func (s *Store) publishChange() {
+	if s == nil || s.notifier == nil {
+		return
+	}
+	s.notifier.Publish(adminstream.VerticalConversation)
 }

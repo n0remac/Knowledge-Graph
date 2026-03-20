@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/n0remac/Knowledge-Graph/internal/claimextract"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
 	"github.com/n0remac/Knowledge-Graph/internal/telemetry"
@@ -19,6 +20,7 @@ const (
 type Engine struct {
 	store          *Store
 	client         *ollama.Client
+	claims         *claimextract.Extractor
 	model          string
 	requestTimeout time.Duration
 	telemetry      *telemetry.Manager
@@ -40,6 +42,7 @@ func NewEngine(store *Store, client *ollama.Client, model string, requestTimeout
 	return &Engine{
 		store:          store,
 		client:         client,
+		claims:         claimextract.New(client, model, telemetry.StageConversation, manager),
 		model:          strings.TrimSpace(model),
 		requestTimeout: requestTimeout,
 		telemetry:      manager,

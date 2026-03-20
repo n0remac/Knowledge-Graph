@@ -349,6 +349,7 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 		Limit  int       `json:"limit"`
 		Filter struct {
 			Must []struct {
+				Key   string `json:"key"`
 				Match struct {
 					Value string `json:"value"`
 				} `json:"match"`
@@ -360,9 +361,9 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	messageSetID := ""
-	if len(payload.Filter.Must) > 0 {
-		messageSetID = payload.Filter.Must[0].Match.Value
+	filters := make(map[string]string, len(payload.Filter.Must))
+	for _, match := range payload.Filter.Must {
+		filters[match.Key] = match.Match.Value
 	}
 
 	s.mu.Lock()
@@ -379,7 +380,7 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 	}
 	hits := make([]hit, 0, len(collection.points))
 	for _, point := range collection.points {
-		if fmt.Sprint(point.Payload["message_set_id"]) != messageSetID {
+		if !payloadMatches(point.Payload, filters) {
 			continue
 		}
 		hits = append(hits, hit{
@@ -396,6 +397,15 @@ func (s *fakeQdrantServer) handleSearch(w http.ResponseWriter, r *http.Request, 
 		hits = hits[:payload.Limit]
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"result": hits})
+}
+
+func payloadMatches(payload map[string]any, filters map[string]string) bool {
+	for key, value := range filters {
+		if fmt.Sprint(payload[key]) != value {
+			return false
+		}
+	}
+	return true
 }
 
 func cosine(a, b []float64) float64 {

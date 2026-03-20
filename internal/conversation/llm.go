@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/n0remac/Knowledge-Graph/internal/claimextract"
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 	"github.com/n0remac/Knowledge-Graph/internal/ollama"
 )
@@ -36,16 +37,6 @@ type summaryUpdateResult struct {
 	Summary string
 }
 
-type claimsPayload struct {
-	Claims []claimPayload `json:"claims"`
-}
-
-type claimPayload struct {
-	Subject   string `json:"subject"`
-	Predicate string `json:"predicate"`
-	Object    string `json:"object"`
-}
-
 type topicsPayload struct {
 	Topics []string `json:"topics"`
 }
@@ -59,36 +50,16 @@ type rollingSummaryPayload struct {
 }
 
 func (e *Engine) extractClaims(ctx context.Context, envelope promptEnvelope) extractionDimension {
-	systemPrompt := `You extract lightweight conversational claims.
-Return ONLY valid JSON with this exact schema:
-{
-  "claims": [
-    {
-      "subject": "who or what",
-      "predicate": "relationship or action",
-      "object": "target or value"
-    }
-  ]
-}
-
-Rules:
-- Extract at most 4 claims.
-- Keep claims concise and literal.
-- Use only information grounded in the current message plus the provided short context.
-- Prefer claims that help maintain short-term continuity.
-- If there are no meaningful claims, return {"claims":[]}.`
-
-	userPrompt := buildSharedPromptEnvelope(envelope)
-	raw, model, err := e.callLLM(ctx, "extract_claims", systemPrompt, userPrompt)
-	if err != nil {
-		return extractionDimension{Name: "claims", Status: "failed", Raw: raw, Model: model, Err: err}
+	result := e.claims.Extract(ctx, claimextract.Input{
+		CurrentMessage: envelope.CurrentMessage,
+		ReplyTarget:    envelope.ReplyTarget,
+		RecentMessages: envelope.RecentMessages,
+		WorkingState:   envelope.WorkingState,
+	})
+	if result.Err != nil {
+		return extractionDimension{Name: "claims", Status: "failed", Raw: result.Raw, Model: result.Model, Err: result.Err}
 	}
-
-	claims, status, parseErr := parseClaimsPayload(raw, envelope.CurrentMessage.MessageID)
-	if parseErr != nil {
-		return extractionDimension{Name: "claims", Status: "failed", Raw: raw, Model: model, Err: parseErr}
-	}
-	return extractionDimension{Name: "claims", Status: status, Raw: raw, Model: model, Claims: claims}
+	return extractionDimension{Name: "claims", Status: result.Status, Raw: result.Raw, Model: result.Model, Claims: result.Claims}
 }
 
 func (e *Engine) extractTopics(ctx context.Context, envelope promptEnvelope) extractionDimension {
@@ -312,36 +283,6 @@ func formatRawMessages(messages []models.RawMessage) string {
 		return "- none\n"
 	}
 	return builder.String()
-}
-
-func parseClaimsPayload(raw, sourceMessageID string) ([]models.Claim, string, error) {
-	body, err := extractJSONObject(raw)
-	if err != nil {
-		return nil, "", err
-	}
-	var payload claimsPayload
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, "", err
-	}
-
-	out := make([]models.Claim, 0, len(payload.Claims))
-	dropped := 0
-	for _, claim := range payload.Claims {
-		subject := strings.TrimSpace(claim.Subject)
-		predicate := strings.TrimSpace(claim.Predicate)
-		object := strings.TrimSpace(claim.Object)
-		if subject == "" || predicate == "" || object == "" {
-			dropped++
-			continue
-		}
-		out = append(out, models.Claim{
-			Subject:         subject,
-			Predicate:       predicate,
-			Object:          object,
-			SourceMessageID: sourceMessageID,
-		})
-	}
-	return out, payloadStatus(len(out), dropped), nil
 }
 
 func parseTopicsPayload(raw string) ([]models.TopicRef, string, error) {

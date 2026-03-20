@@ -18,6 +18,7 @@ const (
 	defaultEmbeddingModel         = "qwen3-embedding:4b"
 	defaultPersona                = "You are a helpful Discord assistant."
 	defaultConversationStorePath  = "data/conversation-state.json"
+	defaultMemoryStorePath        = "data/memory.db"
 	defaultTestSuiteBaseDir       = "data/test-suite"
 	defaultEmbeddingBaseDir       = "data/embedding-tests"
 	defaultWebAddr                = "127.0.0.1:8080"
@@ -36,6 +37,8 @@ type Config struct {
 	OllamaEmbeddingModel   string
 	Persona                string
 	ConversationStorePath  string
+	MemoryObserveChannelID string
+	MemoryStorePath        string
 	TestSuiteBaseDir       string
 	EmbeddingBaseDir       string
 	QdrantBaseURL          string
@@ -57,6 +60,8 @@ func Load() (Config, error) {
 	embeddingModel := readEnvOrDefault("OLLAMA_EMBEDDING_MODEL", defaultEmbeddingModel)
 	persona := readEnvOrDefault("BOT_PERSONA", defaultPersona)
 	conversationStorePath := readEnvOrDefault("CONVERSATION_STORE_PATH", defaultConversationStorePath)
+	memoryObserveChannelID := strings.TrimSpace(os.Getenv("MEMORY_OBSERVE_CHANNEL_ID"))
+	memoryStorePath := readEnvOrDefault("MEMORY_STORE_PATH", defaultMemoryStorePath)
 	testSuiteBaseDir := readEnvOrDefault("TEST_SUITE_BASE_DIR", defaultTestSuiteBaseDir)
 	embeddingBaseDir := readEnvOrDefault("EMBEDDING_BASE_DIR", defaultEmbeddingBaseDir)
 	qdrantBaseURL := readEnvOrDefault("QDRANT_BASE_URL", defaultQdrantBaseURL)
@@ -89,6 +94,8 @@ func Load() (Config, error) {
 		OllamaEmbeddingModel:   embeddingModel,
 		Persona:                persona,
 		ConversationStorePath:  filepath.Clean(conversationStorePath),
+		MemoryObserveChannelID: memoryObserveChannelID,
+		MemoryStorePath:        filepath.Clean(memoryStorePath),
 		TestSuiteBaseDir:       filepath.Clean(testSuiteBaseDir),
 		EmbeddingBaseDir:       filepath.Clean(embeddingBaseDir),
 		QdrantBaseURL:          strings.TrimRight(strings.TrimSpace(qdrantBaseURL), "/"),
@@ -125,6 +132,28 @@ func ValidateWebConfig(cfg Config) error {
 func ValidateEmbeddingConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.EmbeddingBaseDir) == "" || cfg.EmbeddingBaseDir == "." {
 		return fmt.Errorf("embedding base dir cannot be empty")
+	}
+	if strings.TrimSpace(cfg.OllamaEmbeddingModel) == "" {
+		return fmt.Errorf("embedding model cannot be empty")
+	}
+	if err := validateBaseURL("ollama base url", cfg.OllamaBaseURL); err != nil {
+		return err
+	}
+	if err := validateBaseURL("qdrant base url", cfg.QdrantBaseURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.QdrantCollectionPrefix) == "" {
+		return fmt.Errorf("qdrant collection prefix cannot be empty")
+	}
+	if cfg.EmbeddingTimeout <= 0 {
+		return fmt.Errorf("embedding request timeout must be > 0")
+	}
+	return nil
+}
+
+func ValidateMemoryCollectorConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.MemoryStorePath) == "" || cfg.MemoryStorePath == "." {
+		return fmt.Errorf("memory store path cannot be empty")
 	}
 	if strings.TrimSpace(cfg.OllamaEmbeddingModel) == "" {
 		return fmt.Errorf("embedding model cannot be empty")
