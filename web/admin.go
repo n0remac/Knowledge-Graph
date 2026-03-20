@@ -2,9 +2,8 @@ package web
 
 import (
 	"context"
-	"fmt"
-	stdhtml "html"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -12,24 +11,21 @@ import (
 	godomws "github.com/n0remac/GoDom/websocket"
 
 	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
-	"github.com/n0remac/Knowledge-Graph/internal/conversation"
 	"github.com/n0remac/Knowledge-Graph/internal/embeddingtest"
 	"github.com/n0remac/Knowledge-Graph/internal/memory"
 )
 
 const (
-	adminRoomID                = "admin-dashboard"
-	adminConversationSectionID = "admin-vertical-conversation"
-	adminMemorySectionID       = "admin-vertical-memory"
-	adminEmbeddingsSectionID   = "admin-vertical-embeddings"
+	adminRoomID              = "admin-dashboard"
+	adminMemorySectionID     = "admin-vertical-memory"
+	adminEmbeddingsSectionID = "admin-vertical-embeddings"
 )
 
 type AdminDependencies struct {
-	ConversationStore *conversation.Store
-	MemoryStore       *memory.Store
-	EmbeddingService  *embeddingtest.Service
-	EmbeddingInitErr  error
-	Notifier          *adminstream.Notifier
+	MemoryStore      *memory.Store
+	EmbeddingService *embeddingtest.Service
+	EmbeddingInitErr error
+	Notifier         *adminstream.Notifier
 }
 
 var (
@@ -70,15 +66,15 @@ func AdminPage(deps AdminDependencies) *Node {
 						Div(
 							Class("mr-auto"),
 							H1(Class("text-3xl font-semibold tracking-tight text-slate-900"), T("Storage Admin Dashboard")),
-							P(Class("mt-2 text-sm text-slate-600"), T("Live view of conversation, memory, and embedding storage verticals.")),
+							P(Class("mt-2 text-sm text-slate-600"), T("Live view of memory and embedding storage verticals.")),
 						),
 						Span(Class("rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700"), T("Live via HTMX WebSocket")),
 					),
 				),
 				Main(
-					Class("mt-5 grid flex-1 gap-4 xl:grid-cols-3"),
+					Class("mt-5 grid flex-1 gap-4 xl:grid-cols-2"),
 					renderMemorySection(deps.MemoryStore),
-					renderEmbeddingsSection(deps.EmbeddingService, deps.EmbeddingInitErr),
+					renderEmbeddingsSection(deps.MemoryStore, deps.EmbeddingService, deps.EmbeddingInitErr),
 				),
 			),
 		),
@@ -98,7 +94,12 @@ func renderMemorySection(store *memory.Store) *Node {
 	title := "Memory Store"
 	description := "SQLite passive ingestion pipeline"
 	if store == nil {
-		return adminSection(adminMemorySectionID, title, description, `<p class="text-sm text-slate-500">Memory collector is disabled.</p>`)
+		return adminSection(
+			adminMemorySectionID,
+			title,
+			description,
+			P(Class("text-sm text-slate-500"), T("Memory collector is disabled.")),
+		)
 	}
 
 	snapshot, err := store.Snapshot(context.Background(), memory.SnapshotOptions{
@@ -107,57 +108,96 @@ func renderMemorySection(store *memory.Store) *Node {
 		RecentVectorDocuments: 5,
 	})
 	if err != nil {
-		return adminSection(adminMemorySectionID, title, description, `<p class="text-sm text-red-600">`+escapeHTML(err.Error())+`</p>`)
+		return adminSection(
+			adminMemorySectionID,
+			title,
+			description,
+			P(Class("text-sm text-red-600"), T(err.Error())),
+		)
 	}
 
-	var builder strings.Builder
-	builder.WriteString(adminStatsRow([]adminStat{
-		{Label: "Messages", Value: fmt.Sprintf("%d", snapshot.MessageCount)},
-		{Label: "Claims", Value: fmt.Sprintf("%d", snapshot.ClaimCount)},
-		{Label: "Vectors", Value: fmt.Sprintf("%d", snapshot.VectorDocumentCount)},
-	}))
-	builder.WriteString(`<div class="mt-4 grid gap-4 lg:grid-cols-3">`)
-	builder.WriteString(adminSubsection("Recent Messages", renderMemoryMessages(snapshot.RecentMessages)))
-	builder.WriteString(adminSubsection("Recent Claims", renderMemoryClaims(snapshot.RecentClaims)))
-	builder.WriteString(adminSubsection("Recent Vector Docs", renderMemoryVectorDocuments(snapshot.RecentVectorDocs)))
-	builder.WriteString(`</div>`)
-	return adminSection(adminMemorySectionID, title, description, builder.String())
+	return adminSection(
+		adminMemorySectionID,
+		title,
+		description,
+		adminStatsRow([]adminStat{
+			{Label: "Messages", Value: strconv.FormatInt(snapshot.MessageCount, 10)},
+			{Label: "Claims", Value: strconv.FormatInt(snapshot.ClaimCount, 10)},
+			{Label: "Vectors", Value: strconv.FormatInt(snapshot.VectorDocumentCount, 10)},
+		}),
+		Div(
+			Class("mt-4 grid gap-4 lg:grid-cols-3"),
+			adminSubsection("Recent Messages", renderMemoryMessages(snapshot.RecentMessages)),
+			adminSubsection("Recent Claims", renderMemoryClaims(snapshot.RecentClaims)),
+			adminSubsection("Recent Vector Docs", renderMemoryVectorDocuments(snapshot.RecentVectorDocs)),
+		),
+	)
 }
 
-func renderEmbeddingsSection(service *embeddingtest.Service, initErr error) *Node {
+func renderEmbeddingsSection(store *memory.Store, service *embeddingtest.Service, initErr error) *Node {
 	title := "Embeddings Store"
-	description := "Filesystem + Qdrant embedding test slice"
-	switch {
-	case initErr != nil:
-		return adminSection(adminEmbeddingsSectionID, title, description, `<p class="text-sm text-red-600">`+escapeHTML(initErr.Error())+`</p>`)
-	case service == nil:
-		return adminSection(adminEmbeddingsSectionID, title, description, `<p class="text-sm text-slate-500">Embeddings service is not available.</p>`)
+	description := "Live Qdrant-backed vector index plus embedding test slice"
+
+	var (
+		liveSnapshot memory.Snapshot
+		liveErr      error
+		messageSets  []embeddingtest.MessageSet
+		runs         []embeddingtest.RunRecord
+	)
+
+	if store != nil {
+		liveSnapshot, liveErr = store.Snapshot(context.Background(), memory.SnapshotOptions{
+			RecentVectorDocuments: 5,
+		})
+	}
+	if service != nil {
+		messageSets, liveErr = service.ListMessageSets()
+		if liveErr == nil {
+			runs, liveErr = service.ListRuns(5)
+		}
 	}
 
-	messageSets, err := service.ListMessageSets()
-	if err != nil {
-		return adminSection(adminEmbeddingsSectionID, title, description, `<p class="text-sm text-red-600">`+escapeHTML(err.Error())+`</p>`)
+	if liveErr != nil {
+		return adminSection(
+			adminEmbeddingsSectionID,
+			title,
+			description,
+			P(Class("text-sm text-red-600"), T(liveErr.Error())),
+		)
 	}
-	runs, err := service.ListRuns(5)
-	if err != nil {
-		return adminSection(adminEmbeddingsSectionID, title, description, `<p class="text-sm text-red-600">`+escapeHTML(err.Error())+`</p>`)
+	if initErr != nil && store == nil && service == nil {
+		return adminSection(
+			adminEmbeddingsSectionID,
+			title,
+			description,
+			P(Class("text-sm text-red-600"), T(initErr.Error())),
+		)
 	}
 
-	var builder strings.Builder
-	builder.WriteString(adminStatsRow([]adminStat{
-		{Label: "Default Model", Value: service.Defaults().EmbeddingModel},
-		{Label: "Message Sets", Value: fmt.Sprintf("%d", len(messageSets))},
-		{Label: "Runs", Value: fmt.Sprintf("%d", len(runs))},
-	}))
-	builder.WriteString(`<div class="mt-4 grid gap-4 lg:grid-cols-2">`)
-	builder.WriteString(adminSubsection("Recent Message Sets", renderEmbeddingSets(messageSets)))
-	builder.WriteString(adminSubsection("Recent Runs", renderEmbeddingRuns(runs)))
-	builder.WriteString(`</div>`)
+	stats := []adminStat{{Label: "Live Vectors", Value: strconv.FormatInt(liveSnapshot.VectorDocumentCount, 10)}}
+	if model := embeddingDefaultsLabel(store, service, liveSnapshot); model != "" {
+		stats = append(stats, adminStat{Label: "Default Model", Value: model})
+	}
+	if collection := recentCollectionLabel(liveSnapshot.RecentVectorDocs); collection != "" {
+		stats = append(stats, adminStat{Label: "Collection", Value: collection})
+	} else {
+		stats = append(stats, adminStat{Label: "Message Sets", Value: strconv.Itoa(len(messageSets))})
+	}
 
-	return adminSection(adminEmbeddingsSectionID, title, description, builder.String())
+	return adminSection(
+		adminEmbeddingsSectionID,
+		title,
+		description,
+		adminStatsRow(stats),
+		Div(
+			Class("mt-4 grid gap-4 lg:grid-cols-2"),
+			adminSubsection("Live Vector Docs", renderEmbeddingVectorDocuments(liveSnapshot.RecentVectorDocs, initErr)),
+			adminSubsection("Embedding Test Slice", renderEmbeddingTestOverview(messageSets, runs, initErr)),
+		),
+	)
 }
 
-func adminSection(id, title, description, bodyHTML string) *Node {
+func adminSection(id, title, description string, body ...*Node) *Node {
 	return Section(
 		Id(id),
 		Class("admin-vertical rounded-[2rem] border border-slate-300/80 bg-white p-5 shadow-sm"),
@@ -168,7 +208,7 @@ func adminSection(id, title, description, bodyHTML string) *Node {
 				P(Class("mt-1 text-sm text-slate-500"), T(description)),
 			),
 		),
-		Div(Class("mt-4"), Raw(bodyHTML)),
+		Div(Class("mt-4"), Ch(body)),
 	)
 }
 
@@ -177,100 +217,191 @@ type adminStat struct {
 	Value string
 }
 
-func adminStatsRow(stats []adminStat) string {
-	var builder strings.Builder
-	builder.WriteString(`<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">`)
+func adminStatsRow(stats []adminStat) *Node {
+	cards := make([]*Node, 0, len(stats))
 	for _, stat := range stats {
-		builder.WriteString(`<div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">`)
-		builder.WriteString(`<p class="text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-slate-500">` + escapeHTML(stat.Label) + `</p>`)
-		builder.WriteString(`<p class="mt-2 text-lg font-semibold text-slate-900">` + escapeHTML(stat.Value) + `</p>`)
-		builder.WriteString(`</div>`)
+		cards = append(cards, Div(
+			Class("rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"),
+			P(Class("text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-slate-500"), T(stat.Label)),
+			P(Class("mt-2 text-lg font-semibold text-slate-900"), T(stat.Value)),
+		))
 	}
-	builder.WriteString(`</div>`)
-	return builder.String()
+	return Div(Class("grid gap-3 sm:grid-cols-2 xl:grid-cols-3"), Ch(cards))
 }
 
-func adminSubsection(title, body string) string {
-	return `<section class="rounded-2xl border border-slate-200 bg-slate-50 p-4">` +
-		`<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">` + escapeHTML(title) + `</h3>` +
-		`<div class="admin-scroll mt-3 space-y-3">` + body + `</div>` +
-		`</section>`
+func adminSubsection(title string, body []*Node) *Node {
+	return Section(
+		Class("rounded-2xl border border-slate-200 bg-slate-50 p-4"),
+		H3(Class("text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"), T(title)),
+		Div(Class("admin-scroll mt-3 space-y-3"), Ch(body)),
+	)
 }
 
-func renderMemoryMessages(items []memory.MessageSummary) string {
+func renderMemoryMessages(items []memory.MessageSummary) []*Node {
 	if len(items) == 0 {
-		return `<p class="text-sm text-slate-500">No stored messages.</p>`
+		return []*Node{P(Class("text-sm text-slate-500"), T("No stored messages."))}
 	}
-	var builder strings.Builder
+	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
-		builder.WriteString(`<article class="rounded-2xl border border-slate-200 bg-white px-4 py-3">`)
-		builder.WriteString(`<p class="text-xs uppercase tracking-[0.18em] text-slate-500">` + escapeHTML(item.ConversationID) + ` • ` + escapeHTML(item.AuthorRole) + `</p>`)
-		builder.WriteString(`<p class="mt-2 text-sm text-slate-800">` + escapeHTML(item.Content) + `</p>`)
-		builder.WriteString(`</article>`)
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.ConversationID+" • "+item.AuthorRole)),
+			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
+		))
 	}
-	return builder.String()
+	return nodes
 }
 
-func renderMemoryClaims(items []memory.ClaimRecord) string {
+func renderMemoryClaims(items []memory.ClaimRecord) []*Node {
 	if len(items) == 0 {
-		return `<p class="text-sm text-slate-500">No stored claims.</p>`
+		return []*Node{P(Class("text-sm text-slate-500"), T("No stored claims."))}
 	}
-	var builder strings.Builder
+	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
-		builder.WriteString(`<article class="rounded-2xl border border-slate-200 bg-white px-4 py-3">`)
-		builder.WriteString(`<p class="text-xs uppercase tracking-[0.18em] text-slate-500">` + escapeHTML(item.ConversationID) + `</p>`)
-		builder.WriteString(`<p class="mt-2 text-sm font-medium text-slate-900">` + escapeHTML(item.Subject+" | "+item.Predicate+" | "+item.Object) + `</p>`)
-		builder.WriteString(`</article>`)
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.ConversationID)),
+			P(Class("mt-2 text-sm font-medium text-slate-900"), T(item.Subject+" | "+item.Predicate+" | "+item.Object)),
+		))
 	}
-	return builder.String()
+	return nodes
 }
 
-func renderMemoryVectorDocuments(items []memory.VectorDocumentRecord) string {
+func renderMemoryVectorDocuments(items []memory.VectorDocumentRecord) []*Node {
 	if len(items) == 0 {
-		return `<p class="text-sm text-slate-500">No vector documents stored.</p>`
+		return []*Node{P(Class("text-sm text-slate-500"), T("No vector documents stored."))}
 	}
-	var builder strings.Builder
+	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
-		builder.WriteString(`<article class="rounded-2xl border border-slate-200 bg-white px-4 py-3">`)
-		builder.WriteString(`<div class="flex items-center justify-between gap-3">`)
-		builder.WriteString(`<p class="text-xs uppercase tracking-[0.18em] text-slate-500">` + escapeHTML(item.Kind) + `</p>`)
-		builder.WriteString(`<span class="rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">` + escapeHTML(item.IndexStatus) + `</span>`)
-		builder.WriteString(`</div>`)
-		builder.WriteString(`<p class="mt-2 text-sm text-slate-800">` + escapeHTML(item.Content) + `</p>`)
-		builder.WriteString(`</article>`)
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Div(
+				Class("flex items-center justify-between gap-3"),
+				P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.Kind)),
+				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.IndexStatus)),
+			),
+			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
+		))
 	}
-	return builder.String()
+	return nodes
 }
 
-func renderEmbeddingSets(items []embeddingtest.MessageSet) string {
+func renderEmbeddingSets(items []embeddingtest.MessageSet) []*Node {
 	if len(items) == 0 {
-		return `<p class="text-sm text-slate-500">No message sets stored.</p>`
+		return []*Node{P(Class("text-sm text-slate-500"), T("No message sets stored."))}
 	}
-	var builder strings.Builder
+	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
-		builder.WriteString(`<article class="rounded-2xl border border-slate-200 bg-white px-4 py-3">`)
-		builder.WriteString(`<h4 class="font-semibold text-slate-900">` + escapeHTML(item.Name) + `</h4>`)
-		builder.WriteString(`<p class="mt-2 text-sm text-slate-700">` + fmt.Sprintf("%d messages", len(item.Messages)) + `</p>`)
-		builder.WriteString(`</article>`)
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			H4(Class("font-semibold text-slate-900"), T(item.Name)),
+			P(Class("mt-2 text-sm text-slate-700"), T(strconv.Itoa(len(item.Messages))+" messages")),
+		))
 	}
-	return builder.String()
+	return nodes
 }
 
-func renderEmbeddingRuns(items []embeddingtest.RunRecord) string {
+func renderEmbeddingRuns(items []embeddingtest.RunRecord) []*Node {
 	if len(items) == 0 {
-		return `<p class="text-sm text-slate-500">No embedding runs recorded.</p>`
+		return []*Node{P(Class("text-sm text-slate-500"), T("No embedding runs recorded."))}
 	}
-	var builder strings.Builder
+	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
-		builder.WriteString(`<article class="rounded-2xl border border-slate-200 bg-white px-4 py-3">`)
-		builder.WriteString(`<div class="flex items-center justify-between gap-3">`)
-		builder.WriteString(`<h4 class="font-semibold text-slate-900">` + escapeHTML(item.MessageSetName) + `</h4>`)
-		builder.WriteString(`<span class="rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">` + escapeHTML(item.Status) + `</span>`)
-		builder.WriteString(`</div>`)
-		builder.WriteString(`<p class="mt-2 text-sm text-slate-700">` + escapeHTML(item.Query) + `</p>`)
-		builder.WriteString(`</article>`)
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Div(
+				Class("flex items-center justify-between gap-3"),
+				H4(Class("font-semibold text-slate-900"), T(item.MessageSetName)),
+				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.Status)),
+			),
+			P(Class("mt-2 text-sm text-slate-700"), T(item.Query)),
+		))
 	}
-	return builder.String()
+	return nodes
+}
+
+func renderEmbeddingVectorDocuments(items []memory.VectorDocumentRecord, initErr error) []*Node {
+	if len(items) == 0 {
+		if initErr != nil {
+			return []*Node{P(Class("text-sm text-red-600"), T(initErr.Error()))}
+		}
+		return []*Node{P(Class("text-sm text-slate-500"), T("No live vector documents indexed yet."))}
+	}
+
+	nodes := make([]*Node, 0, len(items))
+	for _, item := range items {
+		metadata := strings.TrimSpace(item.EmbeddingModel)
+		if collection := strings.TrimSpace(item.CollectionName); collection != "" {
+			if metadata != "" {
+				metadata += " • "
+			}
+			metadata += collection
+		}
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Div(
+				Class("flex items-center justify-between gap-3"),
+				P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.Kind)),
+				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.IndexStatus)),
+			),
+			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
+			P(Class("mt-2 text-xs text-slate-500"), T(metadata)),
+		))
+	}
+	return nodes
+}
+
+func renderEmbeddingTestOverview(messageSets []embeddingtest.MessageSet, runs []embeddingtest.RunRecord, initErr error) []*Node {
+	if initErr != nil {
+		return []*Node{P(Class("text-sm text-red-600"), T(initErr.Error()))}
+	}
+	if len(messageSets) == 0 && len(runs) == 0 {
+		return []*Node{P(Class("text-sm text-slate-500"), T("No embedding test message sets or runs yet."))}
+	}
+
+	nodes := make([]*Node, 0, len(messageSets)+len(runs))
+	for _, item := range messageSets {
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			H4(Class("font-semibold text-slate-900"), T(item.Name)),
+			P(Class("mt-2 text-sm text-slate-700"), T(strconv.Itoa(len(item.Messages))+" messages")),
+		))
+	}
+	for _, item := range runs {
+		nodes = append(nodes, Article(
+			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Div(
+				Class("flex items-center justify-between gap-3"),
+				H4(Class("font-semibold text-slate-900"), T(item.MessageSetName)),
+				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.Status)),
+			),
+			P(Class("mt-2 text-sm text-slate-700"), T(item.Query)),
+		))
+	}
+	return nodes
+}
+
+func embeddingDefaultsLabel(store *memory.Store, service *embeddingtest.Service, snapshot memory.Snapshot) string {
+	if service != nil {
+		if model := strings.TrimSpace(service.Defaults().EmbeddingModel); model != "" {
+			return model
+		}
+	}
+	for _, item := range snapshot.RecentVectorDocs {
+		if model := strings.TrimSpace(item.EmbeddingModel); model != "" {
+			return model
+		}
+	}
+	return ""
+}
+
+func recentCollectionLabel(items []memory.VectorDocumentRecord) string {
+	for _, item := range items {
+		if collection := strings.TrimSpace(item.CollectionName); collection != "" {
+			return collection
+		}
+	}
+	return ""
 }
 
 func startAdminStream(deps AdminDependencies) {
@@ -297,18 +428,23 @@ func broadcastAdminVertical(vertical string, deps AdminDependencies) {
 	var node *Node
 	switch vertical {
 	case adminstream.VerticalMemory:
-		node = renderMemorySection(deps.MemoryStore)
+		broadcastAdminNode(renderMemorySection(deps.MemoryStore))
+		broadcastAdminNode(renderEmbeddingsSection(deps.MemoryStore, deps.EmbeddingService, deps.EmbeddingInitErr))
+		return
 	case adminstream.VerticalEmbeddings:
-		node = renderEmbeddingsSection(deps.EmbeddingService, deps.EmbeddingInitErr)
+		node = renderEmbeddingsSection(deps.MemoryStore, deps.EmbeddingService, deps.EmbeddingInitErr)
 	default:
+		return
+	}
+	broadcastAdminNode(node)
+}
+
+func broadcastAdminNode(node *Node) {
+	if node == nil {
 		return
 	}
 	godomws.WsHub.Broadcast <- godomws.WebsocketMessage{
 		Room:    adminRoomID,
 		Content: []byte(node.Render()),
 	}
-}
-
-func escapeHTML(value string) string {
-	return stdhtml.EscapeString(strings.TrimSpace(value))
 }

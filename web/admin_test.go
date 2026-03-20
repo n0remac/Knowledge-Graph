@@ -23,14 +23,17 @@ func TestAdminPageIncludesWebsocketAndVerticals(t *testing.T) {
 	if !strings.Contains(rendered, `ws-connect="/ws/hub?room=admin-dashboard"`) {
 		t.Fatalf("expected ws connect attribute, got %s", rendered)
 	}
-	for _, id := range []string{adminConversationSectionID, adminMemorySectionID, adminEmbeddingsSectionID} {
+	for _, id := range []string{adminMemorySectionID, adminEmbeddingsSectionID} {
 		if !strings.Contains(rendered, `id="`+id+`"`) {
 			t.Fatalf("expected section id %q in page", id)
 		}
 	}
+	if strings.Contains(rendered, "admin-vertical-conversation") {
+		t.Fatalf("did not expect conversation vertical in page, got %s", rendered)
+	}
 }
 
-func TestRenderConversationAndMemorySectionsShowStoredData(t *testing.T) {
+func TestRenderMemorySectionShowsStoredData(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -119,11 +122,51 @@ func TestRenderEmbeddingsSectionShowsServiceData(t *testing.T) {
 		t.Fatalf("SaveMessageSet() error = %v", err)
 	}
 
-	rendered := renderEmbeddingsSection(service, nil).Render()
+	rendered := renderEmbeddingsSection(nil, service, nil).Render()
 	if !strings.Contains(rendered, "Recall Facts") {
 		t.Fatalf("expected message set name in embeddings section, got %s", rendered)
 	}
 	if !strings.Contains(rendered, service.Defaults().EmbeddingModel) {
 		t.Fatalf("expected default embedding model in section, got %s", rendered)
+	}
+}
+
+func TestRenderEmbeddingsSectionShowsLiveVectorData(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, err := memory.NewStore(filepath.Join(t.TempDir(), "memory.db"), nil)
+	if err != nil {
+		t.Fatalf("memory.NewStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("memory store Close() error = %v", err)
+		}
+	})
+
+	if err := store.UpsertVectorDocuments(ctx, []memory.VectorDocumentRecord{{
+		DocumentID:      "message:live-1",
+		Kind:            "message",
+		MessageID:       "live-1",
+		ConversationID:  "observe-1",
+		Content:         "indexed memory payload",
+		EmbeddingModel:  "qwen3-embedding-4b",
+		IndexStatus:     "indexed",
+		IndexedAtUnixMs: 3000,
+		CollectionName:  "embedding-v1-qwen3-embedding-4b",
+	}}); err != nil {
+		t.Fatalf("UpsertVectorDocuments() error = %v", err)
+	}
+
+	rendered := renderEmbeddingsSection(store, nil, nil).Render()
+	if !strings.Contains(rendered, "indexed memory payload") {
+		t.Fatalf("expected live vector content in embeddings section, got %s", rendered)
+	}
+	if !strings.Contains(rendered, "embedding-v1-qwen3-embedding-4b") {
+		t.Fatalf("expected collection name in embeddings section, got %s", rendered)
+	}
+	if !strings.Contains(rendered, "qwen3-embedding-4b") {
+		t.Fatalf("expected embedding model in embeddings section, got %s", rendered)
 	}
 }

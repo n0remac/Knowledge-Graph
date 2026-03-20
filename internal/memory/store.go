@@ -18,6 +18,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+const sqliteBusyTimeoutMillis = 5000
+
 type Store struct {
 	path      string
 	db        *sql.DB
@@ -75,10 +77,16 @@ func NewStore(path string, manager *telemetry.Manager) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open memory store: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	store := &Store{
 		path:      path,
 		db:        db,
 		telemetry: manager,
+	}
+	if err := store.configure(); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 	if err := store.init(); err != nil {
 		_ = db.Close()
@@ -389,9 +397,22 @@ func (s *Store) GetVectorDocumentsByMessageID(ctx context.Context, messageID str
 	return out, rows.Err()
 }
 
+func (s *Store) configure() error {
+	statements := []string{
+		fmt.Sprintf(`PRAGMA busy_timeout = %d;`, sqliteBusyTimeoutMillis),
+		`PRAGMA journal_mode = WAL;`,
+		`PRAGMA foreign_keys = ON;`,
+	}
+	for _, statement := range statements {
+		if _, err := s.db.Exec(statement); err != nil {
+			return fmt.Errorf("configure memory store sqlite pragmas: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) init() error {
 	statements := []string{
-		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			message_id TEXT PRIMARY KEY,
 			conversation_id TEXT NOT NULL,

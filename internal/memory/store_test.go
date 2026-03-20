@@ -2,8 +2,10 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/n0remac/Knowledge-Graph/internal/models"
 )
@@ -115,5 +117,89 @@ func TestStorePersistsMessagesExtractionsAndVectorDocuments(t *testing.T) {
 	}
 	if len(documents) != 2 {
 		t.Fatalf("len(documents) = %d, want 2", len(documents))
+	}
+}
+
+func TestStoreSaveMessageWaitsForTransientWriteLock(t *testing.T) {
+	t.Parallel()
+
+	storePath := filepath.Join(t.TempDir(), "memory.db")
+	store, err := NewStore(storePath, nil)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	})
+
+	locker, err := sql.Open("sqlite", storePath)
+	if err != nil {
+		t.Fatalf("sql.Open(locker) error = %v", err)
+	}
+	locker.SetMaxOpenConns(1)
+	locker.SetMaxIdleConns(1)
+	t.Cleanup(func() {
+		if err := locker.Close(); err != nil {
+			t.Fatalf("locker.Close() error = %v", err)
+		}
+	})
+
+	ctx := context.Background()
+	conn, err := locker.Conn(ctx)
+	if err != nil {
+		t.Fatalf("locker.Conn() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Fatalf("conn.Close() error = %v", err)
+		}
+	})
+
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("BEGIN IMMEDIATE error = %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := conn.ExecContext(context.Background(), `ROLLBACK`); err != nil && err != sql.ErrConnDone {
+			// Ignore rollback failures after a successful commit.
+		}
+	})
+
+	saveErrCh := make(chan error, 1)
+	go func() {
+		_, saveErr := store.SaveMessage(context.Background(), models.RawMessage{
+			MessageID:       "message-locked",
+			ConversationID:  "channel-1",
+			SequenceNumber:  1,
+			AuthorID:        "user-1",
+			AuthorRole:      "user",
+			Content:         "This write should wait for the lock.",
+			TimestampUnixMs: 1234,
+		})
+		saveErrCh <- saveErr
+	}()
+
+	select {
+	case err := <-saveErrCh:
+		t.Fatalf("SaveMessage() returned before the lock was released: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	if _, err := conn.ExecContext(ctx, `COMMIT`); err != nil {
+		t.Fatalf("COMMIT error = %v", err)
+	}
+
+	select {
+	case err := <-saveErrCh:
+		if err != nil {
+			t.Fatalf("SaveMessage() error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SaveMessage() did not finish after the lock was released")
+	}
+
+	if _, ok, err := store.GetMessageByID(ctx, "message-locked"); err != nil || !ok {
+		t.Fatalf("GetMessageByID() ok=%v err=%v", ok, err)
 	}
 }

@@ -17,7 +17,6 @@ import (
 
 	"github.com/n0remac/Knowledge-Graph/internal/adminstream"
 	"github.com/n0remac/Knowledge-Graph/internal/config"
-	"github.com/n0remac/Knowledge-Graph/internal/conversation"
 	"github.com/n0remac/Knowledge-Graph/internal/discordbot"
 	"github.com/n0remac/Knowledge-Graph/internal/embeddingtest"
 	"github.com/n0remac/Knowledge-Graph/internal/memory"
@@ -83,19 +82,24 @@ func run() error {
 		embeddingServiceErr = err
 		log.Printf("embedding slice disabled: %v", err)
 	} else {
-		embeddingService, embeddingServiceErr = embeddingtest.NewService(embeddingtest.ServiceConfig{
-			BaseDir:                cfg.EmbeddingBaseDir,
-			OllamaBaseURL:          cfg.OllamaBaseURL,
-			RequestTimeout:         cfg.EmbeddingTimeout,
-			DefaultEmbeddingModel:  cfg.OllamaEmbeddingModel,
-			QdrantBaseURL:          cfg.QdrantBaseURL,
-			QdrantAPIKey:           cfg.QdrantAPIKey,
-			QdrantCollectionPrefix: cfg.QdrantCollectionPrefix,
-		})
-		if embeddingServiceErr != nil {
+		if err := ensureQdrantDocker(context.Background(), cfg.QdrantBaseURL); err != nil {
+			embeddingServiceErr = err
 			log.Printf("embedding slice disabled: %v", embeddingServiceErr)
 		} else {
-			embeddingService.SetNotifier(notifier)
+			embeddingService, embeddingServiceErr = embeddingtest.NewService(embeddingtest.ServiceConfig{
+				BaseDir:                cfg.EmbeddingBaseDir,
+				OllamaBaseURL:          cfg.OllamaBaseURL,
+				RequestTimeout:         cfg.EmbeddingTimeout,
+				DefaultEmbeddingModel:  cfg.OllamaEmbeddingModel,
+				QdrantBaseURL:          cfg.QdrantBaseURL,
+				QdrantAPIKey:           cfg.QdrantAPIKey,
+				QdrantCollectionPrefix: cfg.QdrantCollectionPrefix,
+			})
+			if embeddingServiceErr != nil {
+				log.Printf("embedding slice disabled: %v", embeddingServiceErr)
+			} else {
+				embeddingService.SetNotifier(notifier)
+			}
 		}
 	}
 
@@ -107,12 +111,6 @@ func run() error {
 		webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 	}
 	webapp.Admin(mux, webapp.AdminDependencies{
-		ConversationStore: func() *conversation.Store {
-			if runtime == nil {
-				return nil
-			}
-			return runtime.ConversationStore()
-		}(),
 		MemoryStore: func() *memory.Store {
 			if runtime == nil {
 				return nil
