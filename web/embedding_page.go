@@ -4,37 +4,30 @@ import . "github.com/n0remac/GoDom/html"
 
 func EmbeddingPage() *Node {
 	return Html(
-		Head(
-			Meta(Charset("UTF-8")),
-			Meta(Name("viewport"), Content("width=device-width, initial-scale=1.0")),
-			Title(T("Embedding Experiments")),
-			DaisyUI,
-			Script(Src("https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4")),
-			Style(T(embeddingPageCSS())),
-		),
+		Attr("data-theme", "dark"),
+		pageHead("Embedding Experiments", embeddingPageCSS()),
 		Body(
-			Attr("data-theme", "corporate"),
-			Class("min-h-screen bg-stone-100 text-stone-900"),
+			Class("min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)]"),
 			Div(
 				Class("flex min-h-screen flex-col"),
 				Header(
-					Class("border-b border-stone-300/80 bg-white/90 backdrop-blur"),
+					Class("border-b border-[var(--app-border-strong)] bg-[var(--app-surface)]/95 backdrop-blur"),
 					Div(
 						Class("mx-auto flex w-full max-w-none flex-wrap items-center gap-3 px-4 py-4 md:px-6"),
 						Div(
 							Class("mr-auto flex min-w-[14rem] flex-col"),
-							H1(Class("text-2xl font-semibold tracking-tight text-stone-900"), T("Embedding Experiments")),
-							P(Class("text-sm text-stone-600"), T("Create message sets, run retrieval queries, and inspect ranked results.")),
+							H1(Class("text-2xl font-semibold tracking-tight text-[var(--app-fg)]"), T("Embedding Experiments")),
+							P(Class("text-sm text-[var(--app-fg-muted)]"), T("Create message sets, run retrieval queries, and inspect ranked results.")),
 						),
 						Button(
 							Id("embeddings-reload-btn"),
 							Type("button"),
-							Class("btn btn-sm bg-stone-900 text-white hover:bg-emerald-700"),
+							Class(uiPrimaryButtonClass("sm")),
 							T("Reload"),
 						),
 						Div(
 							Id("embeddings-status"),
-							Class("text-sm text-stone-500"),
+							Class("text-sm text-[var(--app-fg-soft)]"),
 							Attr("role", "status"),
 							T("Loading message sets..."),
 						),
@@ -45,32 +38,32 @@ func EmbeddingPage() *Node {
 					Div(
 						Class("grid gap-4 xl:grid-cols-[18rem_minmax(0,1fr)_minmax(0,1.1fr)]"),
 						Aside(
-							Class("rounded-3xl border border-stone-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-stone-500"), T("Message Sets")),
-								Button(Id("embeddings-new-set-btn"), Type("button"), Class("btn btn-xs bg-stone-900 text-white hover:bg-emerald-700"), T("New")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Message Sets")),
+								Button(Id("embeddings-new-set-btn"), Type("button"), Class(uiPrimaryButtonClass("xs")), T("New")),
 							),
 							Div(Id("embeddings-set-list"), Class("mt-4 flex max-h-[calc(100vh-12rem)] flex-col gap-2 overflow-y-auto pr-1")),
 						),
 						Section(
-							Class("rounded-3xl border border-stone-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-stone-500"), T("Message Set Editor")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Message Set Editor")),
 								Div(Class("flex items-center gap-2"),
-									Button(Id("embeddings-delete-set-btn"), Type("button"), Class("btn btn-sm border border-stone-300 bg-white text-stone-700 hover:border-red-500 hover:text-red-600"), T("Delete")),
-									Button(Id("embeddings-save-set-btn"), Type("button"), Class("btn btn-sm bg-stone-900 text-white hover:bg-emerald-700"), T("Save")),
+									Button(Id("embeddings-delete-set-btn"), Type("button"), Class(uiDangerButtonClass("sm")), T("Delete")),
+									Button(Id("embeddings-save-set-btn"), Type("button"), Class(uiPrimaryButtonClass("sm")), T("Save")),
 								),
 							),
 							Div(Id("embeddings-set-editor"), Class("mt-4")),
 						),
 						Section(
-							Class("rounded-3xl border border-stone-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-stone-500"), T("Retrieval Runs")),
-								Button(Id("embeddings-run-btn"), Type("button"), Class("btn btn-sm bg-stone-900 text-white hover:bg-emerald-700"), T("Run Query")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Retrieval Runs")),
+								Button(Id("embeddings-run-btn"), Type("button"), Class(uiPrimaryButtonClass("sm")), T("Run Query")),
 							),
 							Div(Id("embeddings-run-panel"), Class("mt-4 space-y-4")),
 						),
@@ -84,29 +77,22 @@ func EmbeddingPage() *Node {
 
 func embeddingPageCSS() string {
 	return `
-:root {
-  color-scheme: light;
-}
-
-body {
-  margin: 0;
-}
-
 .embedding-card {
   transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
 }
 
 .embedding-card.is-active {
-  border-color: rgba(16, 185, 129, 0.8);
-  background: rgba(236, 253, 245, 0.9);
+  border-color: rgba(16, 185, 129, 0.68);
+  background: rgba(16, 185, 129, 0.12);
   transform: translateY(-1px);
 }
 
 .embedding-section {
-  border: 1px solid rgba(214, 211, 209, 0.9);
+  border: 1px solid var(--app-border);
   border-radius: 1.25rem;
-  background: linear-gradient(180deg, rgba(250, 250, 249, 1) 0%, rgba(245, 245, 244, 1) 100%);
+  background: var(--app-surface-muted);
   padding: 1rem;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .embedding-label {
@@ -115,7 +101,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgb(120 113 108);
+  color: var(--app-fg-soft);
 }
 `
 }
@@ -133,12 +119,21 @@ var embeddingState = {
   selectedRun: null
 };
 
+var embeddingUi = {
+  input: 'w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 text-sm text-[var(--app-fg)] shadow-sm outline-none transition placeholder:text-[var(--app-fg-soft)] focus:border-emerald-400/70 focus:ring-4 focus:ring-emerald-400/15',
+  inputCompact: 'rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 text-sm text-[var(--app-fg)] shadow-sm outline-none transition placeholder:text-[var(--app-fg-soft)] focus:border-emerald-400/70 focus:ring-4 focus:ring-emerald-400/15',
+  textarea: 'w-full min-h-24 resize-y rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 text-sm text-[var(--app-fg)] shadow-sm outline-none transition placeholder:text-[var(--app-fg-soft)] focus:border-emerald-400/70 focus:ring-4 focus:ring-emerald-400/15',
+  select: 'w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 pr-10 text-sm text-[var(--app-fg)] shadow-sm outline-none transition focus:border-emerald-400/70 focus:ring-4 focus:ring-emerald-400/15',
+  primaryXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-emerald-300/30 bg-emerald-400 px-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-950 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-emerald-300 focus:outline-none focus:ring-4 focus:ring-emerald-400/25',
+  secondaryXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-[var(--app-fg)] shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-emerald-400/50 hover:bg-emerald-500/10 focus:outline-none focus:ring-4 focus:ring-emerald-400/15',
+  dangerXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-red-500/35 bg-red-500/10 px-3 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-red-300 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-red-500/16 focus:outline-none focus:ring-4 focus:ring-red-500/15'
+};
+
 function embeddingStatus(message, isError) {
   var el = document.getElementById('embeddings-status');
   if (!el) return;
   el.textContent = message;
-  el.classList.toggle('text-red-600', !!isError);
-  el.classList.toggle('text-stone-500', !isError);
+  el.className = isError ? 'text-sm text-red-300' : 'text-sm text-[var(--app-fg-soft)]';
 }
 
 function embeddingEscapeHtml(value) {
@@ -169,7 +164,7 @@ function selectedMessageSet() {
 
 function embeddingSection(title, body) {
   return '<section class="embedding-section">' +
-    '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-stone-500">' + embeddingEscapeHtml(title) + '</h3>' +
+    '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]">' + embeddingEscapeHtml(title) + '</h3>' +
     '<div class="mt-3">' + body + '</div>' +
     '</section>';
 }
@@ -194,23 +189,23 @@ function renderMessageSetList() {
   list.innerHTML = '';
 
   if (!embeddingState.messageSets.length) {
-    list.innerHTML = '<div class="rounded-2xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No saved message sets yet.</div>';
+    list.innerHTML = '<div class="rounded-2xl border border-dashed border-[var(--app-border)] px-4 py-8 text-center text-sm text-[var(--app-fg-soft)]">No saved message sets yet.</div>';
     return;
   }
 
   embeddingState.messageSets.forEach(function(messageSet) {
     var button = document.createElement('button');
     button.type = 'button';
-    button.className = 'embedding-card rounded-2xl border border-stone-300 bg-stone-50 px-4 py-3 text-left hover:border-emerald-500 hover:bg-emerald-50';
+    button.className = 'embedding-card rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-left text-[var(--app-fg)] shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-400/60 hover:bg-emerald-500/10';
     if (messageSet.id === embeddingState.selectedSetId) {
       button.classList.add('is-active');
     }
     button.innerHTML =
       '<div class="flex items-center justify-between gap-3">' +
-        '<span class="truncate font-semibold text-stone-900">' + embeddingEscapeHtml(messageSet.name) + '</span>' +
-        '<span class="rounded-full bg-stone-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">' + embeddingEscapeHtml(messageSet.messages.length) + ' msgs</span>' +
+        '<span class="truncate font-semibold text-[var(--app-fg)]">' + embeddingEscapeHtml(messageSet.name) + '</span>' +
+        '<span class="rounded-full border border-emerald-400/30 bg-emerald-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-emerald-200">' + embeddingEscapeHtml(messageSet.messages.length) + ' msgs</span>' +
       '</div>' +
-      '<p class="mt-2 text-xs text-stone-600">' + embeddingEscapeHtml(messageSet.description || 'No description.') + '</p>';
+      '<p class="mt-2 text-xs text-[var(--app-fg-muted)]">' + embeddingEscapeHtml(messageSet.description || 'No description.') + '</p>';
     button.addEventListener('click', function() {
       embeddingState.selectedSetId = messageSet.id;
       embeddingState.editorSet = embeddingClone(messageSet);
@@ -231,15 +226,15 @@ function renderMessageSetEditor() {
     '<div class="space-y-4">' +
       '<div>' +
         '<label class="embedding-label" for="embeddings-set-name">Name</label>' +
-        '<input id="embeddings-set-name" class="input input-bordered mt-2 w-full border-stone-300 bg-white" value="' + embeddingEscapeHtml(messageSet.name || '') + '" />' +
+        '<input id="embeddings-set-name" class="mt-2 ' + embeddingUi.input + '" value="' + embeddingEscapeHtml(messageSet.name || '') + '" />' +
       '</div>' +
       '<div>' +
         '<label class="embedding-label" for="embeddings-set-description">Description</label>' +
-        '<textarea id="embeddings-set-description" class="textarea textarea-bordered mt-2 min-h-24 w-full border-stone-300 bg-white">' + embeddingEscapeHtml(messageSet.description || '') + '</textarea>' +
+        '<textarea id="embeddings-set-description" class="mt-2 ' + embeddingUi.textarea + '">' + embeddingEscapeHtml(messageSet.description || '') + '</textarea>' +
       '</div>' +
       '<div class="flex items-center justify-between gap-3">' +
         '<span class="embedding-label">Messages</span>' +
-        '<button id="embeddings-add-message-btn" type="button" class="btn btn-xs bg-stone-900 text-white hover:bg-emerald-700">Add Message</button>' +
+        '<button id="embeddings-add-message-btn" type="button" class="' + embeddingUi.primaryXs + '">Add Message</button>' +
       '</div>' +
       '<div id="embeddings-message-list" class="space-y-3"></div>' +
     '</div>';
@@ -247,17 +242,17 @@ function renderMessageSetEditor() {
   var messageList = document.getElementById('embeddings-message-list');
   (messageSet.messages || []).forEach(function(message, index) {
     var node = document.createElement('div');
-    node.className = 'rounded-2xl border border-stone-200 bg-stone-50 p-3';
+    node.className = 'rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3';
     node.innerHTML =
       '<div class="flex items-center justify-between gap-3">' +
         '<span class="embedding-label">Message ' + embeddingEscapeHtml(index + 1) + '</span>' +
         '<div class="flex items-center gap-2">' +
-          '<button data-action="up" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="btn btn-xs border border-stone-300 bg-white text-stone-700">Up</button>' +
-          '<button data-action="down" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="btn btn-xs border border-stone-300 bg-white text-stone-700">Down</button>' +
-          '<button data-action="delete" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="btn btn-xs border border-stone-300 bg-white text-red-600">Delete</button>' +
+          '<button data-action="up" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="' + embeddingUi.secondaryXs + '">Up</button>' +
+          '<button data-action="down" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="' + embeddingUi.secondaryXs + '">Down</button>' +
+          '<button data-action="delete" data-index="' + embeddingEscapeHtml(index) + '" type="button" class="' + embeddingUi.dangerXs + '">Delete</button>' +
         '</div>' +
       '</div>' +
-      '<textarea data-message-index="' + embeddingEscapeHtml(index) + '" class="textarea textarea-bordered mt-2 min-h-24 w-full border-stone-300 bg-white">' + embeddingEscapeHtml(message.text || '') + '</textarea>';
+      '<textarea data-message-index="' + embeddingEscapeHtml(index) + '" class="mt-2 ' + embeddingUi.textarea + '">' + embeddingEscapeHtml(message.text || '') + '</textarea>';
     messageList.appendChild(node);
   });
 
@@ -314,13 +309,13 @@ function renderRunPanel() {
     '<div class="space-y-4">' +
       embeddingSection('Run Query',
         '<div class="space-y-3">' +
-          '<div><label class="embedding-label" for="embeddings-model">Embedding Model</label><select id="embeddings-model" class="select select-bordered mt-2 w-full border-stone-300 bg-white">' + modelOptions + '</select></div>' +
-          '<div><label class="embedding-label" for="embeddings-query">Query</label><textarea id="embeddings-query" class="textarea textarea-bordered mt-2 min-h-24 w-full border-stone-300 bg-white" placeholder="Find the message about..."></textarea></div>' +
-          '<div><label class="embedding-label" for="embeddings-topk">Top K</label><input id="embeddings-topk" type="number" min="1" max="20" value="5" class="input input-bordered mt-2 w-32 border-stone-300 bg-white" /></div>' +
-          '<p class="text-xs text-stone-500">Selected message set: ' + embeddingEscapeHtml(messageSet.name || 'Unsaved draft') + '</p>' +
+          '<div><label class="embedding-label" for="embeddings-model">Embedding Model</label><select id="embeddings-model" class="mt-2 ' + embeddingUi.select + '">' + modelOptions + '</select></div>' +
+          '<div><label class="embedding-label" for="embeddings-query">Query</label><textarea id="embeddings-query" class="mt-2 ' + embeddingUi.textarea + '" placeholder="Find the message about..."></textarea></div>' +
+          '<div><label class="embedding-label" for="embeddings-topk">Top K</label><input id="embeddings-topk" type="number" min="1" max="20" value="5" class="mt-2 w-32 ' + embeddingUi.inputCompact + '" /></div>' +
+          '<p class="text-xs text-[var(--app-fg-soft)]">Selected message set: ' + embeddingEscapeHtml(messageSet.name || 'Unsaved draft') + '</p>' +
         '</div>') +
       embeddingSection('Latest Result',
-        selectedRun ? renderRunResults(selectedRun) : '<p class="text-sm text-stone-500">Run a query or select a previous run to inspect ranked results.</p>') +
+        selectedRun ? renderRunResults(selectedRun) : '<p class="text-sm text-[var(--app-fg-soft)]">Run a query or select a previous run to inspect ranked results.</p>') +
       embeddingSection('Recent Runs', renderRunList()) +
     '</div>';
 }
@@ -328,18 +323,18 @@ function renderRunPanel() {
 function renderRunResults(run) {
   var results = run && Array.isArray(run.results) ? run.results : [];
   if (!results.length) {
-    return '<p class="text-sm text-stone-500">' + embeddingEscapeHtml(run.error || 'No results recorded.') + '</p>';
+    return '<p class="text-sm text-[var(--app-fg-soft)]">' + embeddingEscapeHtml(run.error || 'No results recorded.') + '</p>';
   }
   return '<div class="space-y-3">' +
-    '<div class="rounded-2xl border border-stone-200 bg-stone-50 p-3 text-sm text-stone-700">Model: <strong>' + embeddingEscapeHtml(run.embedding_model) + '</strong><br/>Collection: <strong>' + embeddingEscapeHtml(run.collection_name || 'n/a') + '</strong><br/>Query: ' + embeddingEscapeHtml(run.query || '') + '</div>' +
+    '<div class="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3 text-sm text-[var(--app-fg-muted)]">Model: <strong class="text-[var(--app-fg)]">' + embeddingEscapeHtml(run.embedding_model) + '</strong><br/>Collection: <strong class="text-[var(--app-fg)]">' + embeddingEscapeHtml(run.collection_name || 'n/a') + '</strong><br/>Query: ' + embeddingEscapeHtml(run.query || '') + '</div>' +
     results.map(function(result) {
-      return '<div class="rounded-2xl border border-stone-200 bg-stone-50 p-3">' +
-        '<div class="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-stone-500">' +
+      return '<div class="rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3">' +
+        '<div class="flex items-center justify-between gap-3 text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]">' +
           '<span>Rank ' + embeddingEscapeHtml(result.rank) + '</span>' +
           '<span>Score ' + embeddingEscapeHtml(Number(result.score || 0).toFixed(4)) + '</span>' +
         '</div>' +
-        '<p class="mt-2 text-sm font-semibold text-stone-800">Message ' + embeddingEscapeHtml(result.message_index + 1) + '</p>' +
-        '<p class="mt-1 text-sm text-stone-700">' + embeddingEscapeHtml(result.message_text || '') + '</p>' +
+        '<p class="mt-2 text-sm font-semibold text-[var(--app-fg)]">Message ' + embeddingEscapeHtml(result.message_index + 1) + '</p>' +
+        '<p class="mt-1 text-sm text-[var(--app-fg-muted)]">' + embeddingEscapeHtml(result.message_text || '') + '</p>' +
       '</div>';
     }).join('') +
   '</div>';
@@ -347,16 +342,16 @@ function renderRunResults(run) {
 
 function renderRunList() {
   if (!embeddingState.runs.length) {
-    return '<div class="rounded-2xl border border-dashed border-stone-300 px-4 py-8 text-center text-sm text-stone-500">No runs yet.</div>';
+    return '<div class="rounded-2xl border border-dashed border-[var(--app-border)] px-4 py-8 text-center text-sm text-[var(--app-fg-soft)]">No runs yet.</div>';
   }
   return embeddingState.runs.map(function(run) {
-    var activeClass = run.id === embeddingState.selectedRunId ? ' border-emerald-500 bg-emerald-50' : ' border-stone-200 bg-stone-50';
+    var activeClass = run.id === embeddingState.selectedRunId ? ' border-emerald-400/60 bg-emerald-500/10' : ' border-[var(--app-border)] bg-[var(--app-surface-muted)]';
     return '<button data-run-id="' + embeddingEscapeHtml(run.id) + '" type="button" class="w-full rounded-2xl border px-4 py-3 text-left' + activeClass + '">' +
       '<div class="flex items-center justify-between gap-3">' +
-        '<span class="font-semibold text-stone-900">' + embeddingEscapeHtml(run.message_set_name || run.message_set_id) + '</span>' +
-        '<span class="text-xs uppercase tracking-[0.18em] text-stone-500">' + embeddingEscapeHtml(run.status) + '</span>' +
+        '<span class="font-semibold text-[var(--app-fg)]">' + embeddingEscapeHtml(run.message_set_name || run.message_set_id) + '</span>' +
+        '<span class="text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]">' + embeddingEscapeHtml(run.status) + '</span>' +
       '</div>' +
-      '<p class="mt-2 text-xs text-stone-600">' + embeddingEscapeHtml(run.query || '') + '</p>' +
+      '<p class="mt-2 text-xs text-[var(--app-fg-muted)]">' + embeddingEscapeHtml(run.query || '') + '</p>' +
     '</button>';
   }).join('');
 }

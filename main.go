@@ -20,6 +20,7 @@ import (
 	"github.com/n0remac/Knowledge-Graph/internal/discordbot"
 	"github.com/n0remac/Knowledge-Graph/internal/embeddingtest"
 	"github.com/n0remac/Knowledge-Graph/internal/memory"
+	"github.com/n0remac/Knowledge-Graph/internal/researchtest"
 	"github.com/n0remac/Knowledge-Graph/internal/testsuite"
 	webapp "github.com/n0remac/Knowledge-Graph/web"
 )
@@ -102,11 +103,44 @@ func run() error {
 			}
 		}
 	}
+	var researchService *researchtest.Service
+	var researchServiceErr error
+	if err := config.ValidateResearchConfig(cfg); err != nil {
+		researchServiceErr = err
+		log.Printf("research slice disabled: %v", err)
+	} else {
+		if err := ensureQdrantDocker(context.Background(), cfg.QdrantBaseURL); err != nil {
+			researchServiceErr = err
+			log.Printf("research slice disabled: %v", researchServiceErr)
+		} else {
+			researchService, researchServiceErr = researchtest.NewService(researchtest.ServiceConfig{
+				BaseDir:                cfg.ResearchBaseDir,
+				MemoryStorePath:        cfg.MemoryStorePath,
+				OllamaBaseURL:          cfg.OllamaBaseURL,
+				RequestTimeout:         cfg.EmbeddingTimeout,
+				EmbeddingModel:         cfg.OllamaEmbeddingModel,
+				QdrantBaseURL:          cfg.QdrantBaseURL,
+				QdrantAPIKey:           cfg.QdrantAPIKey,
+				QdrantCollectionPrefix: cfg.QdrantCollectionPrefix,
+			})
+			if researchServiceErr != nil {
+				log.Printf("research slice disabled: %v", researchServiceErr)
+			}
+		}
+	}
+	if researchService != nil {
+		defer func() {
+			if err := researchService.Close(); err != nil {
+				log.Printf("research service shutdown error: %v", err)
+			}
+		}()
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws/hub", godomws.CreateWebsocket(websocketRegistry))
 	webapp.TestSuite(mux, testSuiteService)
 	webapp.Embeddings(mux, embeddingService, embeddingServiceErr)
+	webapp.Research(mux, researchService, researchServiceErr)
 	if runtime != nil {
 		webapp.Conversation(mux, runtime.ConversationStore(), cfg.Telemetry.BaseDir)
 	}

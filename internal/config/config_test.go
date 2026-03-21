@@ -18,6 +18,7 @@ func clearConfigEnv(t *testing.T) {
 		"MEMORY_STORE_PATH",
 		"TEST_SUITE_BASE_DIR",
 		"EMBEDDING_BASE_DIR",
+		"RESEARCH_BASE_DIR",
 		"QDRANT_BASE_URL",
 		"QDRANT_API_KEY",
 		"QDRANT_COLLECTION_PREFIX",
@@ -69,6 +70,9 @@ func TestLoadTelemetryDefaults(t *testing.T) {
 	if cfg.EmbeddingBaseDir != "data/embedding-tests" {
 		t.Fatalf("EmbeddingBaseDir = %q", cfg.EmbeddingBaseDir)
 	}
+	if cfg.ResearchBaseDir != "data/research-tests" {
+		t.Fatalf("ResearchBaseDir = %q", cfg.ResearchBaseDir)
+	}
 	if cfg.OllamaEmbeddingModel != "qwen3-embedding:4b" {
 		t.Fatalf("OllamaEmbeddingModel = %q", cfg.OllamaEmbeddingModel)
 	}
@@ -108,6 +112,7 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	t.Setenv("MEMORY_STORE_PATH", "./tmp/memory.sqlite")
 	t.Setenv("TEST_SUITE_REQUEST_TIMEOUT_SECONDS", "240")
 	t.Setenv("EMBEDDING_BASE_DIR", "./tmp/embedding-tests")
+	t.Setenv("RESEARCH_BASE_DIR", "./tmp/research-tests")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
 	t.Setenv("QDRANT_BASE_URL", "http://127.0.0.1:6334")
 	t.Setenv("QDRANT_API_KEY", "secret")
@@ -139,6 +144,9 @@ func TestLoadTelemetryOverrides(t *testing.T) {
 	}
 	if cfg.EmbeddingBaseDir != "tmp/embedding-tests" {
 		t.Fatalf("EmbeddingBaseDir = %q", cfg.EmbeddingBaseDir)
+	}
+	if cfg.ResearchBaseDir != "tmp/research-tests" {
+		t.Fatalf("ResearchBaseDir = %q", cfg.ResearchBaseDir)
 	}
 	if cfg.OllamaEmbeddingModel != "nomic-embed-text" {
 		t.Fatalf("OllamaEmbeddingModel = %q", cfg.OllamaEmbeddingModel)

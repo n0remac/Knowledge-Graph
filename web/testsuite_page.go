@@ -4,37 +4,30 @@ import . "github.com/n0remac/GoDom/html"
 
 func TestSuitePage() *Node {
 	return Html(
-		Head(
-			Meta(Charset("UTF-8")),
-			Meta(Name("viewport"), Content("width=device-width, initial-scale=1.0")),
-			Title(T("Transcript Test Harness")),
-			DaisyUI,
-			Script(Src("https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4")),
-			Style(T(testSuitePageCSS())),
-		),
+		Attr("data-theme", "dark"),
+		pageHead("Transcript Test Harness", testSuitePageCSS()),
 		Body(
-			Attr("data-theme", "corporate"),
-			Class("min-h-screen bg-slate-100 text-slate-900"),
+			Class("min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)]"),
 			Div(
 				Class("flex min-h-screen flex-col"),
 				Header(
-					Class("border-b border-slate-300/80 bg-white/90 backdrop-blur"),
+					Class("border-b border-[var(--app-border-strong)] bg-[var(--app-surface)]/95 backdrop-blur"),
 					Div(
 						Class("mx-auto flex w-full max-w-none flex-wrap items-center gap-3 px-4 py-4 md:px-6"),
 						Div(
 							Class("mr-auto flex min-w-[14rem] flex-col"),
-							H1(Class("text-2xl font-semibold tracking-tight text-slate-900"), T("Transcript Test Harness")),
-							P(Class("text-sm text-slate-600"), T("Create transcripts, run isolated tests, and inspect memory artifacts.")),
+							H1(Class("text-2xl font-semibold tracking-tight text-[var(--app-fg)]"), T("Transcript Test Harness")),
+							P(Class("text-sm text-[var(--app-fg-muted)]"), T("Create transcripts, run isolated tests, and inspect memory artifacts.")),
 						),
 						Button(
 							Id("tests-reload-btn"),
 							Type("button"),
-							Class("btn btn-sm bg-slate-900 text-white hover:bg-cyan-700"),
+							Class(uiPrimaryButtonClass("sm")),
 							T("Reload"),
 						),
 						Div(
 							Id("tests-status"),
-							Class("text-sm text-slate-500"),
+							Class("text-sm text-[var(--app-fg-soft)]"),
 							Attr("role", "status"),
 							T("Loading transcripts..."),
 						),
@@ -45,32 +38,32 @@ func TestSuitePage() *Node {
 					Div(
 						Class("grid gap-4 xl:grid-cols-[18rem_minmax(0,1fr)_minmax(0,1.1fr)]"),
 						Aside(
-							Class("rounded-3xl border border-slate-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"), T("Transcripts")),
-								Button(Id("tests-new-transcript-btn"), Type("button"), Class("btn btn-xs bg-slate-900 text-white hover:bg-cyan-700"), T("New")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Transcripts")),
+								Button(Id("tests-new-transcript-btn"), Type("button"), Class(uiPrimaryButtonClass("xs")), T("New")),
 							),
 							Div(Id("tests-transcript-list"), Class("mt-4 flex max-h-[calc(100vh-12rem)] flex-col gap-2 overflow-y-auto pr-1")),
 						),
 						Section(
-							Class("rounded-3xl border border-slate-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"), T("Transcript Editor")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Transcript Editor")),
 								Div(Class("flex items-center gap-2"),
-									Button(Id("tests-delete-transcript-btn"), Type("button"), Class("btn btn-sm border border-slate-300 bg-white text-slate-700 hover:border-red-500 hover:text-red-600"), T("Delete")),
-									Button(Id("tests-save-transcript-btn"), Type("button"), Class("btn btn-sm bg-slate-900 text-white hover:bg-cyan-700"), T("Save")),
+									Button(Id("tests-delete-transcript-btn"), Type("button"), Class(uiDangerButtonClass("sm")), T("Delete")),
+									Button(Id("tests-save-transcript-btn"), Type("button"), Class(uiPrimaryButtonClass("sm")), T("Save")),
 								),
 							),
 							Div(Id("tests-transcript-editor"), Class("mt-4")),
 						),
 						Section(
-							Class("rounded-3xl border border-slate-300/80 bg-white p-4 shadow-sm"),
+							Class("rounded-3xl border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-4 shadow-sm backdrop-blur"),
 							Div(
 								Class("flex items-center justify-between gap-3"),
-								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"), T("Run Review")),
-								Button(Id("tests-run-btn"), Type("button"), Class("btn btn-sm bg-slate-900 text-white hover:bg-cyan-700"), T("Run Transcript")),
+								H2(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T("Run Review")),
+								Button(Id("tests-run-btn"), Type("button"), Class(uiPrimaryButtonClass("sm")), T("Run Transcript")),
 							),
 							Div(Id("tests-run-panel"), Class("mt-4 space-y-4")),
 						),
@@ -84,29 +77,22 @@ func TestSuitePage() *Node {
 
 func testSuitePageCSS() string {
 	return `
-:root {
-  color-scheme: light;
-}
-
-body {
-  margin: 0;
-}
-
 .tests-card {
   transition: border-color 140ms ease, background-color 140ms ease, transform 140ms ease;
 }
 
 .tests-card.is-active {
-  border-color: rgba(6, 182, 212, 0.8);
-  background: rgba(236, 254, 255, 0.8);
+  border-color: rgba(34, 211, 238, 0.68);
+  background: rgba(8, 145, 178, 0.14);
   transform: translateY(-1px);
 }
 
 .tests-section {
-  border: 1px solid rgba(203, 213, 225, 0.9);
+  border: 1px solid var(--app-border);
   border-radius: 1.25rem;
-  background: linear-gradient(180deg, rgba(248, 250, 252, 1) 0%, rgba(241, 245, 249, 1) 100%);
+  background: var(--app-surface-muted);
   padding: 1rem;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .tests-pre {
@@ -120,7 +106,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgb(100 116 139);
+  color: var(--app-fg-soft);
 }
 `
 }
@@ -142,12 +128,23 @@ var testSuiteState = {
   selectedRunConversation: null
 };
 
+var testsUi = {
+  input: 'w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 text-sm text-[var(--app-fg)] shadow-sm outline-none transition placeholder:text-[var(--app-fg-soft)] focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/15',
+  textarea: 'w-full min-h-24 resize-y rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 text-sm text-[var(--app-fg)] shadow-sm outline-none transition placeholder:text-[var(--app-fg-soft)] focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/15',
+  select: 'w-full rounded-2xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 py-2.5 pr-10 text-sm text-[var(--app-fg)] shadow-sm outline-none transition focus:border-cyan-400/70 focus:ring-4 focus:ring-cyan-400/15',
+  primaryXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-cyan-300/30 bg-cyan-400 px-3 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-950 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-400/25',
+  primarySm: 'inline-flex h-9 items-center justify-center rounded-xl border border-cyan-300/30 bg-cyan-400 px-3.5 text-sm font-semibold text-slate-950 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-cyan-300 focus:outline-none focus:ring-4 focus:ring-cyan-400/25',
+  secondarySm: 'inline-flex h-9 items-center justify-center rounded-xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3.5 text-sm font-medium text-[var(--app-fg)] shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-cyan-400/50 hover:bg-cyan-500/10 focus:outline-none focus:ring-4 focus:ring-cyan-400/15',
+  secondaryXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-[var(--app-border-strong)] bg-[var(--app-panel)] px-3 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-[var(--app-fg)] shadow-sm transition duration-150 hover:-translate-y-0.5 hover:border-cyan-400/50 hover:bg-cyan-500/10 focus:outline-none focus:ring-4 focus:ring-cyan-400/15',
+  dangerSm: 'inline-flex h-9 items-center justify-center rounded-xl border border-red-500/35 bg-red-500/10 px-3.5 text-sm font-medium text-red-300 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-red-500/16 focus:outline-none focus:ring-4 focus:ring-red-500/15',
+  dangerXs: 'inline-flex h-8 items-center justify-center rounded-xl border border-red-500/35 bg-red-500/10 px-3 text-[0.68rem] font-medium uppercase tracking-[0.18em] text-red-300 shadow-sm transition duration-150 hover:-translate-y-0.5 hover:bg-red-500/16 focus:outline-none focus:ring-4 focus:ring-red-500/15'
+};
+
 function testsStatus(message, isError) {
   var el = document.getElementById('tests-status');
   if (!el) return;
   el.textContent = message;
-  el.classList.toggle('text-red-600', !!isError);
-  el.classList.toggle('text-slate-500', !isError);
+  el.className = isError ? 'text-sm text-red-300' : 'text-sm text-[var(--app-fg-soft)]';
 }
 
 function escapeHtml(value) {
@@ -165,7 +162,7 @@ function prettyJson(value) {
 
 function section(title, body) {
   return '<section class="tests-section">' +
-    '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">' + escapeHtml(title) + '</h3>' +
+    '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]">' + escapeHtml(title) + '</h3>' +
     '<div class="mt-3">' + body + '</div>' +
     '</section>';
 }
@@ -237,23 +234,23 @@ function renderTranscriptList() {
   list.innerHTML = '';
 
   if (!testSuiteState.transcripts.length) {
-    list.innerHTML = '<div class="rounded-2xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">No saved transcripts yet.</div>';
+    list.innerHTML = '<div class="rounded-2xl border border-dashed border-[var(--app-border)] px-4 py-8 text-center text-sm text-[var(--app-fg-soft)]">No saved transcripts yet.</div>';
     return;
   }
 
   testSuiteState.transcripts.forEach(function(transcript) {
     var button = document.createElement('button');
     button.type = 'button';
-    button.className = 'tests-card rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-left hover:border-cyan-500 hover:bg-cyan-50';
+    button.className = 'tests-card rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-left text-[var(--app-fg)] shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-400/60 hover:bg-cyan-500/10';
     if (transcript.id === testSuiteState.selectedTranscriptId) {
       button.classList.add('is-active');
     }
     button.innerHTML =
       '<div class="flex items-center justify-between gap-3">' +
-        '<span class="truncate font-semibold text-slate-900">' + escapeHtml(transcript.name) + '</span>' +
-        '<span class="rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">' + escapeHtml(transcript.steps.length) + ' steps</span>' +
+        '<span class="truncate font-semibold text-[var(--app-fg)]">' + escapeHtml(transcript.name) + '</span>' +
+        '<span class="rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200">' + escapeHtml(transcript.steps.length) + ' steps</span>' +
       '</div>' +
-      '<p class="mt-2 text-xs text-slate-600">' + escapeHtml(transcript.description || 'No description.') + '</p>';
+      '<p class="mt-2 text-xs text-[var(--app-fg-muted)]">' + escapeHtml(transcript.description || 'No description.') + '</p>';
     button.addEventListener('click', function() {
       testSuiteState.selectedTranscriptId = transcript.id;
       testSuiteState.editorTranscript = clone(transcript);
@@ -274,15 +271,15 @@ function renderTranscriptEditor() {
     '<div class="space-y-4">' +
       '<div>' +
         '<label class="tests-label" for="tests-transcript-name">Name</label>' +
-        '<input id="tests-transcript-name" class="input input-bordered mt-2 w-full border-slate-300 bg-white" value="' + escapeHtml(transcript.name || '') + '" />' +
+        '<input id="tests-transcript-name" class="mt-2 ' + testsUi.input + '" value="' + escapeHtml(transcript.name || '') + '" />' +
       '</div>' +
       '<div>' +
         '<label class="tests-label" for="tests-transcript-description">Description</label>' +
-        '<textarea id="tests-transcript-description" class="textarea textarea-bordered mt-2 min-h-24 w-full border-slate-300 bg-white">' + escapeHtml(transcript.description || '') + '</textarea>' +
+        '<textarea id="tests-transcript-description" class="mt-2 ' + testsUi.textarea + '">' + escapeHtml(transcript.description || '') + '</textarea>' +
       '</div>' +
       '<div class="flex items-center justify-between gap-3">' +
         '<span class="tests-label">Messages</span>' +
-        '<button id="tests-add-step-btn" type="button" class="btn btn-xs bg-slate-900 text-white hover:bg-cyan-700">Add Message</button>' +
+        '<button id="tests-add-step-btn" type="button" class="' + testsUi.primaryXs + '">Add Message</button>' +
       '</div>' +
       '<div id="tests-steps-list" class="space-y-3"></div>' +
     '</div>';
@@ -290,17 +287,17 @@ function renderTranscriptEditor() {
   var stepsList = document.getElementById('tests-steps-list');
   steps.forEach(function(step, index) {
     var stepNode = document.createElement('div');
-    stepNode.className = 'rounded-2xl border border-slate-200 bg-slate-50 p-3';
+    stepNode.className = 'rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-3';
     stepNode.innerHTML =
       '<div class="flex items-center justify-between gap-3">' +
         '<span class="tests-label">Step ' + escapeHtml(index + 1) + '</span>' +
         '<div class="flex items-center gap-2">' +
-          '<button data-action="up" data-index="' + escapeHtml(index) + '" type="button" class="btn btn-xs border border-slate-300 bg-white text-slate-700">Up</button>' +
-          '<button data-action="down" data-index="' + escapeHtml(index) + '" type="button" class="btn btn-xs border border-slate-300 bg-white text-slate-700">Down</button>' +
-          '<button data-action="delete" data-index="' + escapeHtml(index) + '" type="button" class="btn btn-xs border border-slate-300 bg-white text-red-600">Delete</button>' +
+          '<button data-action="up" data-index="' + escapeHtml(index) + '" type="button" class="' + testsUi.secondaryXs + '">Up</button>' +
+          '<button data-action="down" data-index="' + escapeHtml(index) + '" type="button" class="' + testsUi.secondaryXs + '">Down</button>' +
+          '<button data-action="delete" data-index="' + escapeHtml(index) + '" type="button" class="' + testsUi.dangerXs + '">Delete</button>' +
         '</div>' +
       '</div>' +
-      '<textarea data-step-message="' + escapeHtml(index) + '" class="textarea textarea-bordered mt-2 min-h-28 w-full border-slate-300 bg-white">' + escapeHtml(step.message || '') + '</textarea>';
+      '<textarea data-step-message="' + escapeHtml(index) + '" class="mt-2 min-h-28 ' + testsUi.textarea + '">' + escapeHtml(step.message || '') + '</textarea>';
     stepsList.appendChild(stepNode);
   });
 
@@ -355,55 +352,55 @@ function renderRunPanel() {
   var conversation = selectedConversation();
 
   var runsList = (testSuiteState.runs || []).map(function(item) {
-    return '<button type="button" data-run-id="' + escapeHtml(item.id) + '" class="tests-card w-full rounded-2xl border border-slate-300 bg-slate-50 px-4 py-3 text-left hover:border-cyan-500 hover:bg-cyan-50 ' + (item.id === testSuiteState.selectedRunId ? 'is-active' : '') + '">' +
+    return '<button type="button" data-run-id="' + escapeHtml(item.id) + '" class="tests-card w-full rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3 text-left text-[var(--app-fg)] shadow-sm transition hover:-translate-y-0.5 hover:border-cyan-400/60 hover:bg-cyan-500/10 ' + (item.id === testSuiteState.selectedRunId ? 'is-active' : '') + '">' +
       '<div class="flex items-center justify-between gap-3">' +
-        '<span class="truncate font-semibold text-slate-900">' + escapeHtml(item.transcript_name) + '</span>' +
-        '<span class="rounded-full px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] ' + (item.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : item.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-700') + '">' + escapeHtml(item.status) + '</span>' +
+        '<span class="truncate font-semibold text-[var(--app-fg)]">' + escapeHtml(item.transcript_name) + '</span>' +
+        '<span class="rounded-full px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] ' + (item.status === 'completed' ? 'border border-emerald-400/30 bg-emerald-400/12 text-emerald-200' : item.status === 'failed' ? 'border border-red-500/35 bg-red-500/12 text-red-200' : 'border border-[var(--app-border-strong)] bg-[var(--app-panel)] text-[var(--app-fg-muted)]') + '">' + escapeHtml(item.status) + '</span>' +
       '</div>' +
-      '<p class="mt-2 text-xs text-slate-600">' + escapeHtml(item.chat_model) + ' / ' + escapeHtml(item.extract_model) + '</p>' +
-      '<p class="mt-1 text-[0.72rem] text-slate-500">' + escapeHtml(formatTimestamp(item.started_at_unix_ms)) + '</p>' +
+      '<p class="mt-2 text-xs text-[var(--app-fg-muted)]">' + escapeHtml(item.chat_model) + ' / ' + escapeHtml(item.extract_model) + '</p>' +
+      '<p class="mt-1 text-[0.72rem] text-[var(--app-fg-soft)]">' + escapeHtml(formatTimestamp(item.started_at_unix_ms)) + '</p>' +
     '</button>';
-  }).join('') || '<div class="text-sm text-slate-500">No runs yet.</div>';
+  }).join('') || '<div class="text-sm text-[var(--app-fg-soft)]">No runs yet.</div>';
 
   var steps = '';
   if (run && run.steps && run.steps.length) {
     steps = run.steps.map(function(step) {
       return '<section class="tests-section">' +
         '<div class="flex items-center justify-between gap-3">' +
-          '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Step ' + escapeHtml(step.index) + '</h3>' +
-          '<span class="text-xs text-slate-500">state v' + escapeHtml(step.working_state_version) + '</span>' +
+          '<h3 class="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]">Step ' + escapeHtml(step.index) + '</h3>' +
+          '<span class="text-xs text-[var(--app-fg-soft)]">state v' + escapeHtml(step.working_state_version) + '</span>' +
         '</div>' +
         '<div class="mt-3 space-y-3">' +
-          '<div><p class="tests-label">User Message</p><pre class="tests-pre mt-2 rounded-xl bg-white p-3 text-sm text-slate-800">' + escapeHtml(step.user_message || '') + '</pre></div>' +
-          '<div><p class="tests-label">Assistant Reply</p><pre class="tests-pre mt-2 rounded-xl bg-slate-950 p-3 text-sm text-slate-100">' + escapeHtml(step.assistant_reply || '') + '</pre></div>' +
-          '<div><p class="tests-label">Rolling Summary</p><pre class="tests-pre mt-2 rounded-xl bg-white p-3 text-sm text-slate-800">' + escapeHtml(step.rolling_summary || '') + '</pre></div>' +
-          '<div><p class="tests-label">Response Brief</p><pre class="tests-pre mt-2 rounded-xl bg-slate-950 p-3 text-xs text-slate-100">' + escapeHtml(step.response_brief || '') + '</pre></div>' +
-          '<div class="text-xs text-slate-500">Summary update: ' + escapeHtml(step.summary_update_status || 'n/a') + ' | Trace IDs: ' + escapeHtml((step.trace_ids || []).join(', ')) + '</div>' +
+          '<div><p class="tests-label">User Message</p><pre class="tests-pre mt-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] p-3 text-sm text-[var(--app-fg)]">' + escapeHtml(step.user_message || '') + '</pre></div>' +
+          '<div><p class="tests-label">Assistant Reply</p><pre class="tests-pre mt-2 rounded-xl border border-slate-800 bg-slate-950/90 p-3 text-sm text-slate-100">' + escapeHtml(step.assistant_reply || '') + '</pre></div>' +
+          '<div><p class="tests-label">Rolling Summary</p><pre class="tests-pre mt-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-panel)] p-3 text-sm text-[var(--app-fg)]">' + escapeHtml(step.rolling_summary || '') + '</pre></div>' +
+          '<div><p class="tests-label">Response Brief</p><pre class="tests-pre mt-2 rounded-xl border border-slate-800 bg-slate-950/90 p-3 text-xs text-slate-100">' + escapeHtml(step.response_brief || '') + '</pre></div>' +
+          '<div class="text-xs text-[var(--app-fg-soft)]">Summary update: ' + escapeHtml(step.summary_update_status || 'n/a') + ' | Trace IDs: ' + escapeHtml((step.trace_ids || []).join(', ')) + '</div>' +
         '</div>' +
       '</section>';
     }).join('');
   } else if (run) {
-    steps = '<div class="text-sm text-slate-500">This run has no completed steps.</div>';
+    steps = '<div class="text-sm text-[var(--app-fg-soft)]">This run has no completed steps.</div>';
   } else {
-    steps = '<div class="text-sm text-slate-500">Select a run to inspect its results.</div>';
+    steps = '<div class="text-sm text-[var(--app-fg-soft)]">Select a run to inspect its results.</div>';
   }
 
-  var conversationHtml = '<div class="text-sm text-slate-500">Load isolated conversation artifacts for the selected run.</div>';
+  var conversationHtml = '<div class="text-sm text-[var(--app-fg-soft)]">Load isolated conversation artifacts for the selected run.</div>';
   if (conversation) {
     conversationHtml =
       '<div class="space-y-3">' +
-        '<div class="rounded-2xl border border-slate-200 bg-white p-4">' +
+        '<div class="rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] p-4">' +
           '<div class="flex items-center justify-between gap-3">' +
-            '<span class="font-semibold text-slate-900">' + escapeHtml(conversation.conversation_id) + '</span>' +
-            '<span class="rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white">' + escapeHtml(conversation.message_count) + ' messages</span>' +
+            '<span class="font-semibold text-[var(--app-fg)]">' + escapeHtml(conversation.conversation_id) + '</span>' +
+            '<span class="rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200">' + escapeHtml(conversation.message_count) + ' messages</span>' +
           '</div>' +
-          '<p class="mt-2 text-sm text-slate-600">Latest message: ' + escapeHtml((conversation.latest_message && conversation.latest_message.content) || '') + '</p>' +
+          '<p class="mt-2 text-sm text-[var(--app-fg-muted)]">Latest message: ' + escapeHtml((conversation.latest_message && conversation.latest_message.content) || '') + '</p>' +
         '</div>' +
         '<div class="grid gap-3 lg:grid-cols-2">' +
-          '<pre class="tests-pre rounded-xl bg-slate-950 p-4 text-xs text-slate-100">' + prettyJson(conversation.working_state || {}) + '</pre>' +
-          '<pre class="tests-pre rounded-xl bg-slate-100 p-4 text-xs text-slate-800">' + prettyJson(conversation.latest_response_context || {}) + '</pre>' +
+          '<pre class="tests-pre rounded-xl border border-slate-800 bg-slate-950/90 p-4 text-xs text-slate-100">' + prettyJson(conversation.working_state || {}) + '</pre>' +
+          '<pre class="tests-pre rounded-xl border border-[var(--app-border)] bg-[var(--app-surface)] p-4 text-xs text-[var(--app-fg)]">' + prettyJson(conversation.latest_response_context || {}) + '</pre>' +
         '</div>' +
-        '<pre class="tests-pre rounded-xl bg-slate-950 p-4 text-xs text-slate-100">' + prettyJson(conversation.latest_trace || {}) + '</pre>' +
+        '<pre class="tests-pre rounded-xl border border-slate-800 bg-slate-950/90 p-4 text-xs text-slate-100">' + prettyJson(conversation.latest_trace || {}) + '</pre>' +
       '</div>';
   }
 
@@ -413,47 +410,47 @@ function renderRunPanel() {
         '<div>' +
           '<label class="tests-label" for="tests-run-config-select">Saved Configuration</label>' +
           '<div class="mt-2 flex gap-2">' +
-            '<select id="tests-run-config-select" class="select select-bordered w-full border-slate-300 bg-white">' +
+            '<select id="tests-run-config-select" class="' + testsUi.select + '">' +
               '<option value="">Custom / Defaults</option>' +
               configs.map(function(config) {
                 var selectedAttr = config.id === testSuiteState.selectedConfigId ? ' selected' : '';
                 return '<option value="' + escapeHtml(config.id) + '"' + selectedAttr + '>' + escapeHtml(config.name) + '</option>';
               }).join('') +
             '</select>' +
-            '<button id="tests-new-config-btn" type="button" class="btn btn-sm border border-slate-300 bg-white text-slate-700">New</button>' +
+            '<button id="tests-new-config-btn" type="button" class="' + testsUi.secondarySm + '">New</button>' +
           '</div>' +
         '</div>' +
         '<div>' +
           '<label class="tests-label" for="tests-run-config-name">Configuration Name</label>' +
           '<div class="mt-2 flex gap-2">' +
-            '<input id="tests-run-config-name" class="input input-bordered w-full border-slate-300 bg-white" value="' + escapeHtml(runForm.name || '') + '" />' +
-            '<button id="tests-save-config-btn" type="button" class="btn btn-sm bg-slate-900 text-white hover:bg-cyan-700">Save Config</button>' +
-            '<button id="tests-delete-config-btn" type="button" class="btn btn-sm border border-slate-300 bg-white text-red-600">Delete</button>' +
+            '<input id="tests-run-config-name" class="' + testsUi.input + '" value="' + escapeHtml(runForm.name || '') + '" />' +
+            '<button id="tests-save-config-btn" type="button" class="' + testsUi.primarySm + '">Save Config</button>' +
+            '<button id="tests-delete-config-btn" type="button" class="' + testsUi.dangerSm + '">Delete</button>' +
           '</div>' +
         '</div>' +
-        '<div><label class="tests-label" for="tests-chat-model">Chat Model</label><select id="tests-chat-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, runForm.chat_model || defaults.chat_model || '') + '</select></div>' +
-        '<div><label class="tests-label" for="tests-extract-model">Extract Model</label><select id="tests-extract-model" class="select select-bordered mt-2 w-full border-slate-300 bg-white">' + selectOptions(models, runForm.extract_model || defaults.extract_model || '') + '</select></div>' +
-        '<div><label class="tests-label" for="tests-persona">Persona</label><textarea id="tests-persona" class="textarea textarea-bordered mt-2 min-h-24 w-full border-slate-300 bg-white">' + escapeHtml(runForm.persona || defaults.persona || '') + '</textarea></div>' +
+        '<div><label class="tests-label" for="tests-chat-model">Chat Model</label><select id="tests-chat-model" class="mt-2 ' + testsUi.select + '">' + selectOptions(models, runForm.chat_model || defaults.chat_model || '') + '</select></div>' +
+        '<div><label class="tests-label" for="tests-extract-model">Extract Model</label><select id="tests-extract-model" class="mt-2 ' + testsUi.select + '">' + selectOptions(models, runForm.extract_model || defaults.extract_model || '') + '</select></div>' +
+        '<div><label class="tests-label" for="tests-persona">Persona</label><textarea id="tests-persona" class="mt-2 ' + testsUi.textarea + '">' + escapeHtml(runForm.persona || defaults.persona || '') + '</textarea></div>' +
       '</div>') +
     section('Recent Runs', '<div id="tests-runs-list" class="space-y-2">' + runsList + '</div>') +
     section('Selected Run',
       run ? (
         '<div class="space-y-3">' +
-          '<div class="rounded-2xl border border-slate-200 bg-white p-4">' +
+          '<div class="rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] p-4">' +
             '<div class="flex items-center justify-between gap-3">' +
-              '<div><p class="font-semibold text-slate-900">' + escapeHtml(run.transcript_name) + '</p><p class="text-xs text-slate-500">' + escapeHtml(run.id) + '</p></div>' +
-              '<span class="rounded-full px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] ' + (run.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : run.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-slate-200 text-slate-700') + '">' + escapeHtml(run.status) + '</span>' +
+              '<div><p class="font-semibold text-[var(--app-fg)]">' + escapeHtml(run.transcript_name) + '</p><p class="text-xs text-[var(--app-fg-soft)]">' + escapeHtml(run.id) + '</p></div>' +
+              '<span class="rounded-full px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] ' + (run.status === 'completed' ? 'border border-emerald-400/30 bg-emerald-400/12 text-emerald-200' : run.status === 'failed' ? 'border border-red-500/35 bg-red-500/12 text-red-200' : 'border border-[var(--app-border-strong)] bg-[var(--app-surface-muted)] text-[var(--app-fg-muted)]') + '">' + escapeHtml(run.status) + '</span>' +
             '</div>' +
-            '<p class="mt-2 text-xs text-slate-500">Started: ' + escapeHtml(formatTimestamp(run.started_at_unix_ms)) + '</p>' +
-            '<p class="mt-1 text-xs text-slate-500">Chat: ' + escapeHtml(run.chat_model) + ' | Extract: ' + escapeHtml(run.extract_model) + '</p>' +
-            '<p class="mt-1 text-xs text-slate-500">Store: ' + escapeHtml(run.store_path) + '</p>' +
-            '<p class="mt-1 text-xs text-slate-500">Telemetry: ' + escapeHtml(run.telemetry_dir) + '</p>' +
-            (run.error ? '<pre class="tests-pre mt-3 rounded-xl bg-red-50 p-3 text-xs text-red-700">' + escapeHtml(run.error) + '</pre>' : '') +
-            '<div class="mt-3"><button id="tests-load-run-conversation-btn" type="button" class="btn btn-sm border border-slate-300 bg-white text-slate-700 hover:border-cyan-500 hover:text-cyan-700">Load Conversation Artifacts</button></div>' +
+            '<p class="mt-2 text-xs text-[var(--app-fg-soft)]">Started: ' + escapeHtml(formatTimestamp(run.started_at_unix_ms)) + '</p>' +
+            '<p class="mt-1 text-xs text-[var(--app-fg-soft)]">Chat: ' + escapeHtml(run.chat_model) + ' | Extract: ' + escapeHtml(run.extract_model) + '</p>' +
+            '<p class="mt-1 text-xs text-[var(--app-fg-soft)]">Store: ' + escapeHtml(run.store_path) + '</p>' +
+            '<p class="mt-1 text-xs text-[var(--app-fg-soft)]">Telemetry: ' + escapeHtml(run.telemetry_dir) + '</p>' +
+            (run.error ? '<pre class="tests-pre mt-3 rounded-xl border border-red-500/35 bg-red-500/10 p-3 text-xs text-red-200">' + escapeHtml(run.error) + '</pre>' : '') +
+            '<div class="mt-3"><button id="tests-load-run-conversation-btn" type="button" class="' + testsUi.secondarySm + '">Load Conversation Artifacts</button></div>' +
           '</div>' +
           steps +
         '</div>'
-      ) : '<div class="text-sm text-slate-500">Select a run to review.</div>') +
+      ) : '<div class="text-sm text-[var(--app-fg-soft)]">Select a run to review.</div>') +
     section('Isolated Conversation View', conversationHtml);
 
   document.querySelectorAll('[data-run-id]').forEach(function(node) {

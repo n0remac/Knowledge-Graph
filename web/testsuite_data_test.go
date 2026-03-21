@@ -111,6 +111,9 @@ func TestTestSuitePageEmitsRawScript(t *testing.T) {
 	if strings.Contains(rendered, "fetch(&#39;/tests/data&#39;") {
 		t.Fatalf("test suite page script was HTML-escaped: %s", rendered)
 	}
+	if !strings.Contains(rendered, `data-theme="dark"`) {
+		t.Fatalf("expected dark theme default in rendered page, got: %s", rendered)
+	}
 }
 
 func TestTestSuiteRunConfigHandlers(t *testing.T) {

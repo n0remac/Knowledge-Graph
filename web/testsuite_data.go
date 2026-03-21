@@ -271,6 +271,8 @@ func isBadRequestError(err error) bool {
 		"required",
 		"cannot be empty",
 		"must contain",
+		"must be between",
+		"must be >",
 	} {
 		if strings.Contains(message, marker) {
 			return true

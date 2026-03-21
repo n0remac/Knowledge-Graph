@@ -23,6 +23,9 @@ func TestAdminPageIncludesWebsocketAndVerticals(t *testing.T) {
 	if !strings.Contains(rendered, `ws-connect="/ws/hub?room=admin-dashboard"`) {
 		t.Fatalf("expected ws connect attribute, got %s", rendered)
 	}
+	if !strings.Contains(rendered, `data-theme="dark"`) {
+		t.Fatalf("expected dark theme default in rendered page, got %s", rendered)
+	}
 	for _, id := range []string{adminMemorySectionID, adminEmbeddingsSectionID} {
 		if !strings.Contains(rendered, `id="`+id+`"`) {
 			t.Fatalf("expected section id %q in page", id)

@@ -21,6 +21,7 @@ const (
 	defaultMemoryStorePath        = "data/memory.db"
 	defaultTestSuiteBaseDir       = "data/test-suite"
 	defaultEmbeddingBaseDir       = "data/embedding-tests"
+	defaultResearchBaseDir        = "data/research-tests"
 	defaultWebAddr                = "127.0.0.1:8080"
 	defaultRequestTimeoutSec      = 45
 	defaultTestSuiteTimeoutSec    = 180
@@ -41,6 +42,7 @@ type Config struct {
 	MemoryStorePath        string
 	TestSuiteBaseDir       string
 	EmbeddingBaseDir       string
+	ResearchBaseDir        string
 	QdrantBaseURL          string
 	QdrantAPIKey           string
 	QdrantCollectionPrefix string
@@ -64,6 +66,7 @@ func Load() (Config, error) {
 	memoryStorePath := readEnvOrDefault("MEMORY_STORE_PATH", defaultMemoryStorePath)
 	testSuiteBaseDir := readEnvOrDefault("TEST_SUITE_BASE_DIR", defaultTestSuiteBaseDir)
 	embeddingBaseDir := readEnvOrDefault("EMBEDDING_BASE_DIR", defaultEmbeddingBaseDir)
+	researchBaseDir := readEnvOrDefault("RESEARCH_BASE_DIR", defaultResearchBaseDir)
 	qdrantBaseURL := readEnvOrDefault("QDRANT_BASE_URL", defaultQdrantBaseURL)
 	qdrantAPIKey := strings.TrimSpace(os.Getenv("QDRANT_API_KEY"))
 	qdrantCollectionPrefix := readEnvOrDefault("QDRANT_COLLECTION_PREFIX", defaultQdrantCollectionPrefix)
@@ -98,6 +101,7 @@ func Load() (Config, error) {
 		MemoryStorePath:        filepath.Clean(memoryStorePath),
 		TestSuiteBaseDir:       filepath.Clean(testSuiteBaseDir),
 		EmbeddingBaseDir:       filepath.Clean(embeddingBaseDir),
+		ResearchBaseDir:        filepath.Clean(researchBaseDir),
 		QdrantBaseURL:          strings.TrimRight(strings.TrimSpace(qdrantBaseURL), "/"),
 		QdrantAPIKey:           qdrantAPIKey,
 		QdrantCollectionPrefix: strings.TrimSpace(qdrantCollectionPrefix),
@@ -132,6 +136,31 @@ func ValidateWebConfig(cfg Config) error {
 func ValidateEmbeddingConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.EmbeddingBaseDir) == "" || cfg.EmbeddingBaseDir == "." {
 		return fmt.Errorf("embedding base dir cannot be empty")
+	}
+	if strings.TrimSpace(cfg.OllamaEmbeddingModel) == "" {
+		return fmt.Errorf("embedding model cannot be empty")
+	}
+	if err := validateBaseURL("ollama base url", cfg.OllamaBaseURL); err != nil {
+		return err
+	}
+	if err := validateBaseURL("qdrant base url", cfg.QdrantBaseURL); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.QdrantCollectionPrefix) == "" {
+		return fmt.Errorf("qdrant collection prefix cannot be empty")
+	}
+	if cfg.EmbeddingTimeout <= 0 {
+		return fmt.Errorf("embedding request timeout must be > 0")
+	}
+	return nil
+}
+
+func ValidateResearchConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.ResearchBaseDir) == "" || cfg.ResearchBaseDir == "." {
+		return fmt.Errorf("research base dir cannot be empty")
+	}
+	if strings.TrimSpace(cfg.MemoryStorePath) == "" || cfg.MemoryStorePath == "." {
+		return fmt.Errorf("memory store path cannot be empty")
 	}
 	if strings.TrimSpace(cfg.OllamaEmbeddingModel) == "" {
 		return fmt.Errorf("embedding model cannot be empty")

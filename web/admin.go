@@ -42,33 +42,29 @@ func Admin(mux *http.ServeMux, deps AdminDependencies) {
 
 func AdminPage(deps AdminDependencies) *Node {
 	return Html(
-		Head(
-			Meta(Charset("UTF-8")),
-			Meta(Name("viewport"), Content("width=device-width, initial-scale=1.0")),
-			Title(T("Admin Dashboard")),
-			DaisyUI,
-			Script(Src("https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4")),
+		Attr("data-theme", "dark"),
+		pageHead(
+			"Admin Dashboard",
+			adminPageCSS(),
 			Script(Src("https://unpkg.com/htmx.org@2.0.4")),
 			Script(Src("https://unpkg.com/htmx-ext-ws@2.0.2/ws.js")),
-			Style(T(adminPageCSS())),
 		),
 		Body(
-			Attr("data-theme", "corporate"),
 			Attr("hx-ext", "ws"),
 			Attr("ws-connect", "/ws/hub?room="+adminRoomID),
-			Class("min-h-screen bg-slate-100 text-slate-900"),
+			Class("min-h-screen bg-[var(--app-bg)] text-[var(--app-fg)]"),
 			Div(
 				Class("mx-auto flex min-h-screen w-full max-w-[1800px] flex-col px-4 py-5 md:px-6"),
 				Header(
-					Class("rounded-[2rem] border border-slate-300/80 bg-white/90 px-6 py-5 shadow-sm"),
+					Class("rounded-[2rem] border border-[var(--app-border-strong)] bg-[var(--app-surface)] px-6 py-5 shadow-sm backdrop-blur"),
 					Div(
 						Class("flex flex-wrap items-center gap-3"),
 						Div(
 							Class("mr-auto"),
-							H1(Class("text-3xl font-semibold tracking-tight text-slate-900"), T("Storage Admin Dashboard")),
-							P(Class("mt-2 text-sm text-slate-600"), T("Live view of memory and embedding storage verticals.")),
+							H1(Class("text-3xl font-semibold tracking-tight text-[var(--app-fg)]"), T("Storage Admin Dashboard")),
+							P(Class("mt-2 text-sm text-[var(--app-fg-muted)]"), T("Live view of memory and embedding storage verticals.")),
 						),
-						Span(Class("rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-700"), T("Live via HTMX WebSocket")),
+						Span(Class("rounded-full border border-emerald-400/30 bg-emerald-400/12 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-200"), T("Live via HTMX WebSocket")),
 					),
 				),
 				Main(
@@ -83,7 +79,6 @@ func AdminPage(deps AdminDependencies) *Node {
 
 func adminPageCSS() string {
 	return `
-body { margin: 0; }
 .admin-vertical { min-height: 22rem; }
 .admin-scroll { max-height: 24rem; overflow-y: auto; }
 .admin-code { white-space: pre-wrap; word-break: break-word; }
@@ -98,7 +93,7 @@ func renderMemorySection(store *memory.Store) *Node {
 			adminMemorySectionID,
 			title,
 			description,
-			P(Class("text-sm text-slate-500"), T("Memory collector is disabled.")),
+			P(Class("text-sm text-[var(--app-fg-soft)]"), T("Memory collector is disabled.")),
 		)
 	}
 
@@ -112,7 +107,7 @@ func renderMemorySection(store *memory.Store) *Node {
 			adminMemorySectionID,
 			title,
 			description,
-			P(Class("text-sm text-red-600"), T(err.Error())),
+			P(Class("text-sm text-red-300"), T(err.Error())),
 		)
 	}
 
@@ -162,7 +157,7 @@ func renderEmbeddingsSection(store *memory.Store, service *embeddingtest.Service
 			adminEmbeddingsSectionID,
 			title,
 			description,
-			P(Class("text-sm text-red-600"), T(liveErr.Error())),
+			P(Class("text-sm text-red-300"), T(liveErr.Error())),
 		)
 	}
 	if initErr != nil && store == nil && service == nil {
@@ -170,7 +165,7 @@ func renderEmbeddingsSection(store *memory.Store, service *embeddingtest.Service
 			adminEmbeddingsSectionID,
 			title,
 			description,
-			P(Class("text-sm text-red-600"), T(initErr.Error())),
+			P(Class("text-sm text-red-300"), T(initErr.Error())),
 		)
 	}
 
@@ -200,12 +195,12 @@ func renderEmbeddingsSection(store *memory.Store, service *embeddingtest.Service
 func adminSection(id, title, description string, body ...*Node) *Node {
 	return Section(
 		Id(id),
-		Class("admin-vertical rounded-[2rem] border border-slate-300/80 bg-white p-5 shadow-sm"),
+		Class("admin-vertical rounded-[2rem] border border-[var(--app-border-strong)] bg-[var(--app-surface)] p-5 shadow-sm backdrop-blur"),
 		Div(
 			Class("flex items-start justify-between gap-3"),
 			Div(
-				H2(Class("text-xl font-semibold text-slate-900"), T(title)),
-				P(Class("mt-1 text-sm text-slate-500"), T(description)),
+				H2(Class("text-xl font-semibold text-[var(--app-fg)]"), T(title)),
+				P(Class("mt-1 text-sm text-[var(--app-fg-soft)]"), T(description)),
 			),
 		),
 		Div(Class("mt-4"), Ch(body)),
@@ -221,9 +216,9 @@ func adminStatsRow(stats []adminStat) *Node {
 	cards := make([]*Node, 0, len(stats))
 	for _, stat := range stats {
 		cards = append(cards, Div(
-			Class("rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3"),
-			P(Class("text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-slate-500"), T(stat.Label)),
-			P(Class("mt-2 text-lg font-semibold text-slate-900"), T(stat.Value)),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] px-4 py-3"),
+			P(Class("text-[0.7rem] font-semibold uppercase tracking-[0.2em] text-[var(--app-fg-soft)]"), T(stat.Label)),
+			P(Class("mt-2 text-lg font-semibold text-[var(--app-fg)]"), T(stat.Value)),
 		))
 	}
 	return Div(Class("grid gap-3 sm:grid-cols-2 xl:grid-cols-3"), Ch(cards))
@@ -231,22 +226,22 @@ func adminStatsRow(stats []adminStat) *Node {
 
 func adminSubsection(title string, body []*Node) *Node {
 	return Section(
-		Class("rounded-2xl border border-slate-200 bg-slate-50 p-4"),
-		H3(Class("text-sm font-semibold uppercase tracking-[0.18em] text-slate-500"), T(title)),
+		Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-surface-muted)] p-4"),
+		H3(Class("text-sm font-semibold uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T(title)),
 		Div(Class("admin-scroll mt-3 space-y-3"), Ch(body)),
 	)
 }
 
 func renderMemoryMessages(items []memory.MessageSummary) []*Node {
 	if len(items) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No stored messages."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No stored messages."))}
 	}
 	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
-			P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.ConversationID+" • "+item.AuthorRole)),
-			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
+			P(Class("text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T(item.ConversationID+" • "+item.AuthorRole)),
+			P(Class("mt-2 text-sm text-[var(--app-fg)]"), T(item.Content)),
 		))
 	}
 	return nodes
@@ -254,14 +249,14 @@ func renderMemoryMessages(items []memory.MessageSummary) []*Node {
 
 func renderMemoryClaims(items []memory.ClaimRecord) []*Node {
 	if len(items) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No stored claims."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No stored claims."))}
 	}
 	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
-			P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.ConversationID)),
-			P(Class("mt-2 text-sm font-medium text-slate-900"), T(item.Subject+" | "+item.Predicate+" | "+item.Object)),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
+			P(Class("text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T(item.ConversationID)),
+			P(Class("mt-2 text-sm font-medium text-[var(--app-fg)]"), T(item.Subject+" | "+item.Predicate+" | "+item.Object)),
 		))
 	}
 	return nodes
@@ -269,18 +264,18 @@ func renderMemoryClaims(items []memory.ClaimRecord) []*Node {
 
 func renderMemoryVectorDocuments(items []memory.VectorDocumentRecord) []*Node {
 	if len(items) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No vector documents stored."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No vector documents stored."))}
 	}
 	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
 			Div(
 				Class("flex items-center justify-between gap-3"),
-				P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.Kind)),
-				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.IndexStatus)),
+				P(Class("text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T(item.Kind)),
+				Span(Class("rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200"), T(item.IndexStatus)),
 			),
-			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
+			P(Class("mt-2 text-sm text-[var(--app-fg)]"), T(item.Content)),
 		))
 	}
 	return nodes
@@ -288,14 +283,14 @@ func renderMemoryVectorDocuments(items []memory.VectorDocumentRecord) []*Node {
 
 func renderEmbeddingSets(items []embeddingtest.MessageSet) []*Node {
 	if len(items) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No message sets stored."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No message sets stored."))}
 	}
 	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
-			H4(Class("font-semibold text-slate-900"), T(item.Name)),
-			P(Class("mt-2 text-sm text-slate-700"), T(strconv.Itoa(len(item.Messages))+" messages")),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
+			H4(Class("font-semibold text-[var(--app-fg)]"), T(item.Name)),
+			P(Class("mt-2 text-sm text-[var(--app-fg-muted)]"), T(strconv.Itoa(len(item.Messages))+" messages")),
 		))
 	}
 	return nodes
@@ -303,18 +298,18 @@ func renderEmbeddingSets(items []embeddingtest.MessageSet) []*Node {
 
 func renderEmbeddingRuns(items []embeddingtest.RunRecord) []*Node {
 	if len(items) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No embedding runs recorded."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No embedding runs recorded."))}
 	}
 	nodes := make([]*Node, 0, len(items))
 	for _, item := range items {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
 			Div(
 				Class("flex items-center justify-between gap-3"),
-				H4(Class("font-semibold text-slate-900"), T(item.MessageSetName)),
-				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.Status)),
+				H4(Class("font-semibold text-[var(--app-fg)]"), T(item.MessageSetName)),
+				Span(Class("rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200"), T(item.Status)),
 			),
-			P(Class("mt-2 text-sm text-slate-700"), T(item.Query)),
+			P(Class("mt-2 text-sm text-[var(--app-fg-muted)]"), T(item.Query)),
 		))
 	}
 	return nodes
@@ -323,9 +318,9 @@ func renderEmbeddingRuns(items []embeddingtest.RunRecord) []*Node {
 func renderEmbeddingVectorDocuments(items []memory.VectorDocumentRecord, initErr error) []*Node {
 	if len(items) == 0 {
 		if initErr != nil {
-			return []*Node{P(Class("text-sm text-red-600"), T(initErr.Error()))}
+			return []*Node{P(Class("text-sm text-red-300"), T(initErr.Error()))}
 		}
-		return []*Node{P(Class("text-sm text-slate-500"), T("No live vector documents indexed yet."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No live vector documents indexed yet."))}
 	}
 
 	nodes := make([]*Node, 0, len(items))
@@ -338,14 +333,14 @@ func renderEmbeddingVectorDocuments(items []memory.VectorDocumentRecord, initErr
 			metadata += collection
 		}
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
 			Div(
 				Class("flex items-center justify-between gap-3"),
-				P(Class("text-xs uppercase tracking-[0.18em] text-slate-500"), T(item.Kind)),
-				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.IndexStatus)),
+				P(Class("text-xs uppercase tracking-[0.18em] text-[var(--app-fg-soft)]"), T(item.Kind)),
+				Span(Class("rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200"), T(item.IndexStatus)),
 			),
-			P(Class("mt-2 text-sm text-slate-800"), T(item.Content)),
-			P(Class("mt-2 text-xs text-slate-500"), T(metadata)),
+			P(Class("mt-2 text-sm text-[var(--app-fg)]"), T(item.Content)),
+			P(Class("mt-2 text-xs text-[var(--app-fg-soft)]"), T(metadata)),
 		))
 	}
 	return nodes
@@ -353,29 +348,29 @@ func renderEmbeddingVectorDocuments(items []memory.VectorDocumentRecord, initErr
 
 func renderEmbeddingTestOverview(messageSets []embeddingtest.MessageSet, runs []embeddingtest.RunRecord, initErr error) []*Node {
 	if initErr != nil {
-		return []*Node{P(Class("text-sm text-red-600"), T(initErr.Error()))}
+		return []*Node{P(Class("text-sm text-red-300"), T(initErr.Error()))}
 	}
 	if len(messageSets) == 0 && len(runs) == 0 {
-		return []*Node{P(Class("text-sm text-slate-500"), T("No embedding test message sets or runs yet."))}
+		return []*Node{P(Class("text-sm text-[var(--app-fg-soft)]"), T("No embedding test message sets or runs yet."))}
 	}
 
 	nodes := make([]*Node, 0, len(messageSets)+len(runs))
 	for _, item := range messageSets {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
-			H4(Class("font-semibold text-slate-900"), T(item.Name)),
-			P(Class("mt-2 text-sm text-slate-700"), T(strconv.Itoa(len(item.Messages))+" messages")),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
+			H4(Class("font-semibold text-[var(--app-fg)]"), T(item.Name)),
+			P(Class("mt-2 text-sm text-[var(--app-fg-muted)]"), T(strconv.Itoa(len(item.Messages))+" messages")),
 		))
 	}
 	for _, item := range runs {
 		nodes = append(nodes, Article(
-			Class("rounded-2xl border border-slate-200 bg-white px-4 py-3"),
+			Class("rounded-2xl border border-[var(--app-border)] bg-[var(--app-panel)] px-4 py-3"),
 			Div(
 				Class("flex items-center justify-between gap-3"),
-				H4(Class("font-semibold text-slate-900"), T(item.MessageSetName)),
-				Span(Class("rounded-full bg-slate-900 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white"), T(item.Status)),
+				H4(Class("font-semibold text-[var(--app-fg)]"), T(item.MessageSetName)),
+				Span(Class("rounded-full border border-cyan-400/30 bg-cyan-400/12 px-2 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-200"), T(item.Status)),
 			),
-			P(Class("mt-2 text-sm text-slate-700"), T(item.Query)),
+			P(Class("mt-2 text-sm text-[var(--app-fg-muted)]"), T(item.Query)),
 		))
 	}
 	return nodes
